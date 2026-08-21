@@ -45,7 +45,7 @@ type Overworld struct {
 	// Runtime IDs are resolved once, since resolving a block on every one of
 	// the ~98k positions in a chunk would dominate generation time.
 	air, stone, deepslate, dirt, grass, sand, gravel, snow, podzol uint32
-	water, lava, bedrock, clay                                     uint32
+	water, lava, bedrock, clay, ice, azalea                        uint32
 
 	// Per-biome surface, indexed by biomeKind.
 	biomeID, topRID, fillerRID [biomeKindCount]uint32
@@ -90,6 +90,10 @@ func NewOverworld(seed int64) *Overworld {
 		lava:      rid(block.Lava{Still: true, Depth: 8}),
 		bedrock:   rid(block.Bedrock{}),
 		clay:      rid(block.Clay{}),
+		// Ice and azalea have no Go type in Dragonfly, but both are registered
+		// block states, so they resolve by name.
+		ice:    ridByName("minecraft:ice", rid, block.PackedIce{}),
+		azalea: ridByName("minecraft:azalea", rid, block.Air{}),
 	}
 
 	for k := biomeKind(0); k < biomeKindCount; k++ {
@@ -117,6 +121,15 @@ func NewOverworld(seed int64) *Overworld {
 	}
 	o.ores = o.buildOreField()
 	return o
+}
+
+// ridByName resolves a block that Dragonfly registers as a state without giving
+// it a Go type, falling back to a substitute if a future version drops it.
+func ridByName(name string, rid func(world.Block) uint32, fallback world.Block) uint32 {
+	if b, ok := world.BlockByName(name, nil); ok {
+		return rid(b)
+	}
+	return rid(fallback)
 }
 
 // hash mixes a coordinate triple and the seed into a well-distributed uint64.
@@ -268,7 +281,14 @@ func (o *Overworld) generateTerrain(pos chunkPos, c *chunk.Chunk, cols *columns)
 					c.SetBlock(x, y, z, 0, o.bedrock)
 					continue
 				case wy > height:
-					if wy <= seaLevel {
+					if wy > seaLevel {
+						continue
+					}
+					// A frozen biome gets a sheet of ice on top and water
+					// beneath it, the way a frozen lake is built.
+					if wy == seaLevel && (kind == bFrozenOcean || kind == bFrozenRiver) {
+						c.SetBlock(x, y, z, 0, o.ice)
+					} else {
 						c.SetBlock(x, y, z, 0, o.water)
 					}
 					continue

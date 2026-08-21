@@ -67,6 +67,9 @@ type entry struct {
 type Manager struct {
 	dir string
 	log *slog.Logger
+	// entities is shared by every world. A world opened with a registry that
+	// does not know a saved entity's type cannot load it back.
+	entities world.EntityRegistry
 
 	mu      sync.RWMutex
 	entries map[string]*entry
@@ -81,11 +84,11 @@ type Manager struct {
 //
 // The block registry must already be finalized, which server.Config.New does,
 // so New must be called after the Server is constructed.
-func New(dir string, log *slog.Logger, builtIn map[string]*world.World, def string) (*Manager, error) {
+func New(dir string, log *slog.Logger, entities world.EntityRegistry, builtIn map[string]*world.World, def string) (*Manager, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("create worlds directory: %w", err)
 	}
-	m := &Manager{dir: dir, log: log, entries: map[string]*entry{}, def: def}
+	m := &Manager{dir: dir, log: log, entities: entities, entries: map[string]*entry{}, def: def}
 
 	for name, w := range builtIn {
 		m.entries[strings.ToLower(name)] = &entry{name: name, w: w, builtIn: true}
@@ -173,6 +176,7 @@ func (m *Manager) open(name string, md meta) (*world.World, error) {
 		Dim:          kind.Dimension(),
 		Provider:     provider,
 		Generator:    g,
+		Entities:     m.entities,
 		SaveInterval: time.Minute * 5,
 	}.New()
 

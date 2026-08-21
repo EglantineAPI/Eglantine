@@ -70,6 +70,7 @@ func Register(m *worlds.Manager, o *perm.Store, l *slog.Logger, s *server.Server
 	reg("enchant", "Enchant the item a player is holding.", nil, enchantCommand{})
 	reg("title", "Show a title on a player's screen.", nil, titleCommand{})
 	reg("spawnpoint", "Set where a player respawns.", nil, spawnPointCommand{})
+	reg("summon", "Place a mob in the world.", nil, summonCommand{})
 
 	// World.
 	reg("time", "Read or change the time of day.", nil, timeSet{}, timeAdd{}, timeQuery{})

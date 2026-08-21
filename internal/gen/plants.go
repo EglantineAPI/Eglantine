@@ -150,13 +150,19 @@ func (o *Overworld) growWater(c *chunk.Chunk, lx, height, lz int, kind biomeKind
 	if depth < 1 {
 		return
 	}
+	// Nothing grows under a frozen surface, and a stalk reaching the top would
+	// punch through the sheet of ice laid there.
+	if kind == bFrozenOcean || kind == bFrozenRiver {
+		return
+	}
 	h := o.hash(wx, height, wz, 0x4e19)
 	roll := int(h % 10000)
 
 	switch {
 	case depth >= 4 && roll < 900:
-		// A stalk of kelp rising most of the way to the surface.
-		stalk := 2 + int(h>>20)%(depth-1)
+		// A stalk of kelp rising most of the way to the surface, always
+		// stopping at least one block short of it.
+		stalk := 2 + int(h>>20)%(depth-2)
 		for i := range stalk {
 			o.setWaterlogged(c, lx, height+1+i, lz, o.plants.kelp)
 		}
@@ -209,10 +215,13 @@ func (o *Overworld) decorateLushCaves(c *chunk.Chunk, pos chunkPos, cols *column
 					continue
 				}
 				h := o.hash(wx, y, wz, 0x1a55)
-				if int(h%100) < 55 {
+				switch roll := int(h % 100); {
+				case roll < 48:
 					setIfInside(c, lx, y, lz, o.plants.mossCarpet)
-				} else if int(h%100) < 70 {
+				case roll < 62:
 					setIfInside(c, lx, y, lz, o.plants.fern)
+				case roll < 68:
+					setIfInside(c, lx, y, lz, o.azalea)
 				}
 			}
 		}

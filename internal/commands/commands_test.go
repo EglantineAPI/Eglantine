@@ -10,6 +10,8 @@ import (
 
 	"github.com/df-mc/dragonfly/server/cmd"
 	"github.com/df-mc/dragonfly/server/world"
+
+	"server/internal/mob"
 )
 
 // TestMain finalizes the block registry, which the block name enum needs, and
@@ -30,7 +32,7 @@ func TestEveryCommandRegisters(t *testing.T) {
 		"clear", "clone", "daylock", "deop", "difficulty", "effect", "enchant",
 		"experience", "fill", "gamemode", "gamerule", "give", "help", "kick",
 		"kill", "list", "me", "op", "save", "say", "seed", "setblock",
-		"setworldspawn", "spawnpoint", "stop", "teleport", "tell", "time",
+		"setworldspawn", "spawnpoint", "stop", "summon", "teleport", "tell", "time",
 		"title", "transfer", "weather", "world",
 	}
 	registered := map[string]bool{}
@@ -66,6 +68,7 @@ func enums() []cmd.Enum {
 	return []cmd.Enum{
 		gameModeEnum(""), difficultyEnum(""), itemEnum(""), blockEnum(""),
 		effectEnum(""), enchantmentEnum(""), weatherEnum(""), timeSpecEnum(""),
+		mobEnum(""),
 		titleActionEnum(""), gameRuleEnum(""), worldName(""), generatorKind(""),
 	}
 }
@@ -155,6 +158,19 @@ func TestEveryEffectResolves(t *testing.T) {
 		// silently do nothing when applied.
 		if entry.lasting == nil && entry.typ == nil {
 			t.Errorf("effect %q has neither a lasting nor an instant type", name)
+		}
+	}
+}
+
+// TestEveryMobResolves checks each mob the enum offers can be looked back up.
+func TestEveryMobResolves(t *testing.T) {
+	opts := mobEnum("").Options(nil)
+	if len(opts) < 50 {
+		t.Errorf("only %d mobs are offered", len(opts))
+	}
+	for _, name := range opts {
+		if _, ok := mob.Lookup(name); !ok {
+			t.Errorf("mob %q completes but does not resolve", name)
 		}
 	}
 }
