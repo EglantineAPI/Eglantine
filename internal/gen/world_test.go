@@ -217,7 +217,7 @@ func TestCaveShape(t *testing.T) {
 		total, carved := 0, 0
 		for cx := range 12 {
 			for cz := range 12 {
-				f := o.newCaveField(chunkPos{x: cx, z: cz})
+				f := o.newCaveField(chunkPos{x: cx, z: cz}, 200)
 				var col caveColumn
 				for lx := 0; lx < 16; lx += 2 {
 					for lz := 0; lz < 16; lz += 2 {

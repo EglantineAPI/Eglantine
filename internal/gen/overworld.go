@@ -252,9 +252,11 @@ func (o *Overworld) GenerateChunk(pos world.ChunkPos, c *chunk.Chunk) {
 func (o *Overworld) generateTerrain(pos chunkPos, c *chunk.Chunk, cols *columns) {
 	min, max := int16(c.Range().Min()), int16(c.Range().Max())
 	baseX, baseZ := pos.x*16, pos.z*16
-	caves := o.newCaveField(pos)
-	var caveCol caveColumn
 
+	// The columns are solved first, both because later passes read them and
+	// because the highest ground in the chunk bounds how much cave noise has to
+	// be sampled at all.
+	topY := caveFloor
 	for lx := range 16 {
 		for lz := range 16 {
 			wx, wz := baseX+lx, baseZ+lz
@@ -266,13 +268,27 @@ func (o *Overworld) generateTerrain(pos chunkPos, c *chunk.Chunk, cols *columns)
 			if kind == bStonyPeaks || kind == bFrozenPeaks || kind == bSnowySlopes {
 				cols.hasMountain = true
 			}
+			topY = maxInt(topY, height)
+		}
+	}
+
+	caves := o.newCaveField(pos, topY)
+	var caveCol caveColumn
+
+	for lx := range 16 {
+		for lz := range 16 {
+			wx, wz := baseX+lx, baseZ+lz
+			height, kind := cols.height[lx][lz], cols.biome[lx][lz]
 
 			cc := o.columnCaveAt(wx, wz, height)
 			caves.column(wx, wz, &caveCol)
+
 			bid, top, filler := o.biomeID[kind], o.topRID[kind], o.fillerRID[kind]
 			if height < seaLevel {
 				top, filler = o.seabedAt(wx, wz, seaLevel-height)
 			}
+			frozen := kind == bFrozenOcean || kind == bFrozenRiver
+			bedrockTop := int(min) + o.bedrockDepth(wx, wz)
 
 			x, z := uint8(lx), uint8(lz)
 			for y := min; y <= max; y++ {
@@ -280,7 +296,7 @@ func (o *Overworld) generateTerrain(pos chunkPos, c *chunk.Chunk, cols *columns)
 
 				wy := int(y)
 				switch {
-				case wy <= int(min)+o.bedrockDepth(wx, wz):
+				case wy <= bedrockTop:
 					c.SetBlock(x, y, z, 0, o.bedrock)
 					continue
 				case wy > height:
@@ -289,7 +305,7 @@ func (o *Overworld) generateTerrain(pos chunkPos, c *chunk.Chunk, cols *columns)
 					}
 					// A frozen biome gets a sheet of ice on top and water
 					// beneath it, the way a frozen lake is built.
-					if wy == seaLevel && (kind == bFrozenOcean || kind == bFrozenRiver) {
+					if wy == seaLevel && frozen {
 						c.SetBlock(x, y, z, 0, o.ice)
 					} else {
 						c.SetBlock(x, y, z, 0, o.water)

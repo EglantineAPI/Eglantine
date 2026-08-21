@@ -71,6 +71,8 @@ type Manager struct {
 	// chunks. It has to match the server's, or a world created at runtime would
 	// generate far more slowly than the ones opened at startup.
 	workers int
+	// pool bounds how much chunk generation runs at once across every world.
+	pool *gen.Pool
 	// entities is shared by every world. A world opened with a registry that
 	// does not know a saved entity's type cannot load it back.
 	entities world.EntityRegistry
@@ -88,11 +90,11 @@ type Manager struct {
 //
 // The block registry must already be finalized, which server.Config.New does,
 // so New must be called after the Server is constructed.
-func New(dir string, log *slog.Logger, entities world.EntityRegistry, workers int, builtIn map[string]*world.World, def string) (*Manager, error) {
+func New(dir string, log *slog.Logger, entities world.EntityRegistry, workers int, pool *gen.Pool, builtIn map[string]*world.World, def string) (*Manager, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("create worlds directory: %w", err)
 	}
-	m := &Manager{dir: dir, log: log, entities: entities, workers: workers, entries: map[string]*entry{}, def: def}
+	m := &Manager{dir: dir, log: log, entities: entities, workers: workers, pool: pool, entries: map[string]*entry{}, def: def}
 
 	for name, w := range builtIn {
 		m.entries[strings.ToLower(name)] = &entry{name: name, w: w, builtIn: true}
@@ -166,7 +168,7 @@ func (m *Manager) open(name string, md meta) (*world.World, error) {
 	if !ok {
 		return nil, fmt.Errorf("unknown generator %q", md.Kind)
 	}
-	g, err := kind.New(md.Seed)
+	g, err := kind.NewPooled(md.Seed, m.pool)
 	if err != nil {
 		return nil, err
 	}

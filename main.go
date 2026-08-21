@@ -44,21 +44,29 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+	// Chunk workers do two different jobs. Reading a chunk off disk waits on
+	// I/O, so plenty of workers help; generating one is pure arithmetic and
+	// will hold a core for as long as it is given. Worlds therefore get a
+	// generous number of workers, while generation itself is funnelled through
+	// one pool that is sized to leave the world tick a core of its own.
+	pool := gen.NewPool(generationThreads())
+	defer pool.Close()
+	conf.ChunkLoadWorkers = pool.Size() + 2
+
 	conf.Generator = func(dim world.Dimension) world.Generator {
-		return generatorFor(dim, seed)
+		return gen.Pooled(generatorFor(dim, seed), pool)
 	}
 	// Mobs have to be registered before any world opens, or a world that has
 	// one saved in it cannot read it back.
 	entities := mob.Registry()
 	conf.Entities = entities
-	conf.ChunkLoadWorkers = chunkWorkers()
 
 	// conf.New finalizes the block registry. Generators resolve blocks to
 	// runtime IDs, which panics before that, so nothing may build one until
 	// this call has returned.
 	srv := conf.New()
 
-	mgr, err := worlds.New(worldsDir, log, entities, conf.ChunkLoadWorkers, map[string]*world.World{
+	mgr, err := worlds.New(worldsDir, log, entities, conf.ChunkLoadWorkers, pool, map[string]*world.World{
 		"world":  srv.World(),
 		"nether": srv.Nether(),
 		"end":    srv.End(),
@@ -102,17 +110,17 @@ func main() {
 	}
 }
 
-// chunkWorkers returns how many goroutines should generate and load chunks.
+// generationThreads returns how many chunks may be generated at once.
 //
-// Dragonfly defaults to one, and a single worker is also the case where it
-// serialises the generator behind a mutex. A joining player asks for the whole
-// square of chunks around them at once — over a thousand even at a modest view
-// distance — so one worker means the player waits for all of them in sequence
-// and the world appears frozen until it finishes.
+// Dragonfly defaults to a single chunk worker, and a single worker is also the
+// case where it serialises the generator behind a mutex. A joining player asks
+// for the whole square of chunks around them at once — hundreds even at a
+// modest view distance — so one worker means the player waits for all of them
+// in sequence and the world appears frozen until it finishes.
 //
 // One core is left to the world tick, so generating chunks cannot starve the
 // server itself.
-func chunkWorkers() int {
+func generationThreads() int {
 	if n := runtime.NumCPU() - 1; n > 1 {
 		return n
 	}

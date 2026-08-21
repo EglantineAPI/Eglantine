@@ -73,10 +73,14 @@ type veinSpec struct {
 type veinField struct {
 	seed  int64
 	specs []veinSpec
-	// hostRock reports whether ore may replace a block, and whether that block
-	// is the deep variant.
-	hostRock func(rid uint32) (deep, ok bool)
-	air      uint32
+	// host and hostDeep are the blocks ore may replace. hostDeep is the deeper
+	// variant and may be zero where there is none.
+	//
+	// These are plain fields rather than a predicate function because the check
+	// runs on every candidate block of every vein, and an indirect call there
+	// costs more than the comparison it wraps.
+	host, hostDeep uint32
+	air            uint32
 }
 
 // maxVeinReach bounds how far a vein can extend from its centre, deciding how
@@ -258,8 +262,9 @@ func (f *veinField) set(spec veinSpec, vr *detRand, c *chunk.Chunk, bx, by, bz, 
 	if lx < 0 || lx > 15 || lz < 0 || lz > 15 {
 		return
 	}
-	deep, ok := f.hostRock(c.Block(uint8(lx), int16(by), uint8(lz), 0))
-	if !ok {
+	existing := c.Block(uint8(lx), int16(by), uint8(lz), 0)
+	deep := f.hostDeep != 0 && existing == f.hostDeep
+	if existing != f.host && !deep {
 		return
 	}
 	if spec.discardOnAir > 0 && vr.float() < spec.discardOnAir {

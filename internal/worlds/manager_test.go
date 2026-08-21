@@ -25,7 +25,7 @@ func manager(t *testing.T) (*Manager, string) {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), "worlds")
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	m, err := New(dir, log, mob.Registry(), 2, nil, "")
+	m, err := New(dir, log, mob.Registry(), 2, nil, nil, "")
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -90,7 +90,7 @@ func TestReopenRestoresWorlds(t *testing.T) {
 	}
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	again, err := New(dir, log, mob.Registry(), 2, nil, "")
+	again, err := New(dir, log, mob.Registry(), 2, nil, nil, "")
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}
@@ -203,7 +203,7 @@ func TestStrayDirectoryIgnored(t *testing.T) {
 		t.Fatal(err)
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	m, err := New(dir, log, mob.Registry(), 2, nil, "")
+	m, err := New(dir, log, mob.Registry(), 2, nil, nil, "")
 	if err != nil {
 		t.Fatalf("New with a stray directory: %v", err)
 	}

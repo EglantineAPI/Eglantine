@@ -40,17 +40,10 @@ func (o *Overworld) buildOreField() *veinField {
 	return &veinField{
 		seed: o.seed,
 		air:  o.air,
-		hostRock: func(rid uint32) (bool, bool) {
-			// Ore replaces stone only. Anything else means the vein ran into
-			// air, a cave, water or the surface layers.
-			switch rid {
-			case o.stone:
-				return false, true
-			case o.deepslate:
-				return true, true
-			}
-			return false, false
-		},
+		// Ore replaces stone only. Anything else means the vein ran into air,
+		// a cave, water or the surface layers.
+		host:     o.stone,
+		hostDeep: o.deepslate,
 		specs: []veinSpec{
 			// Coal: very common, and the upper batch is why surface coal is easy.
 			spec(oreCoal, 30, 17, distUniform, 136, 320, 0),
