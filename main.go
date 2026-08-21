@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"runtime"
 
 	"github.com/df-mc/dragonfly/server"
 	"github.com/df-mc/dragonfly/server/player/chat"
@@ -43,8 +44,17 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+	// Chunk workers do two different jobs. Reading a chunk off disk waits on
+	// I/O, so plenty of workers help; generating one is pure arithmetic and
+	// will hold a core for as long as it is given. Worlds therefore get a
+	// generous number of workers, while generation itself is funnelled through
+	// one pool that is sized to leave the world tick a core of its own.
+	pool := gen.NewPool(generationThreads())
+	defer pool.Close()
+	conf.ChunkLoadWorkers = pool.Size() + 2
+
 	conf.Generator = func(dim world.Dimension) world.Generator {
-		return generatorFor(dim, seed)
+		return gen.Pooled(generatorFor(dim, seed), pool)
 	}
 	// Mobs have to be registered before any world opens, or a world that has
 	// one saved in it cannot read it back.
@@ -56,7 +66,7 @@ func main() {
 	// this call has returned.
 	srv := conf.New()
 
-	mgr, err := worlds.New(worldsDir, log, entities, map[string]*world.World{
+	mgr, err := worlds.New(worldsDir, log, entities, conf.ChunkLoadWorkers, pool, map[string]*world.World{
 		"world":  srv.World(),
 		"nether": srv.Nether(),
 		"end":    srv.End(),
@@ -98,6 +108,23 @@ func main() {
 	if err := mgr.Close(); err != nil {
 		log.Error("Could not close worlds.", "error", err)
 	}
+}
+
+// generationThreads returns how many chunks may be generated at once.
+//
+// Dragonfly defaults to a single chunk worker, and a single worker is also the
+// case where it serialises the generator behind a mutex. A joining player asks
+// for the whole square of chunks around them at once — hundreds even at a
+// modest view distance — so one worker means the player waits for all of them
+// in sequence and the world appears frozen until it finishes.
+//
+// One core is left to the world tick, so generating chunks cannot starve the
+// server itself.
+func generationThreads() int {
+	if n := runtime.NumCPU() - 1; n > 1 {
+		return n
+	}
+	return 2
 }
 
 // generatorFor returns the generator for one of the server's built-in worlds.

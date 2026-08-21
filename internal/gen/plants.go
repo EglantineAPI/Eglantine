@@ -202,6 +202,9 @@ func (o *Overworld) decorateLushCaves(c *chunk.Chunk, pos chunkPos, cols *column
 	for lx := range 16 {
 		for lz := range 16 {
 			wx, wz := baseX+lx, baseZ+lz
+			if !o.lushRegion(wx, wz) {
+				continue
+			}
 			top := minInt(cols.height[lx][lz], 24)
 			for y := top; y > minY+1; y-- {
 				if !o.lushAt(wx, y, wz) {

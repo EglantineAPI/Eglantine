@@ -63,9 +63,7 @@ func (n *Nether) buildOreField() *veinField {
 	return &veinField{
 		seed: n.seed,
 		air:  world.DefaultBlockRegistry.AirRuntimeID(),
-		hostRock: func(rid uint32) (bool, bool) {
-			return false, rid == n.netherrack
-		},
+		host: n.netherrack,
 		specs: []veinSpec{
 			{block: n.quartzOre, count: 16, size: 14, dist: distUniform, minY: 10, maxY: 118},
 			{block: n.goldOre, count: 10, size: 10, dist: distUniform, minY: 10, maxY: 118},

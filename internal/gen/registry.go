@@ -71,6 +71,17 @@ func (k Kind) Dimension() world.Dimension {
 	return dim
 }
 
+// NewPooled builds the generator for this Kind and routes its chunk generation
+// through the pool passed, so that generation across every world stays bounded.
+// A nil pool leaves the generator unwrapped.
+func (k Kind) NewPooled(seed int64, p *Pool) (world.Generator, error) {
+	g, err := k.New(seed)
+	if err != nil {
+		return nil, err
+	}
+	return Pooled(g, p), nil
+}
+
 // New builds the generator for this Kind at the seed passed.
 func (k Kind) New(seed int64) (world.Generator, error) {
 	switch k {
