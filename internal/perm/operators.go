@@ -163,3 +163,30 @@ func (s *Store) Names() []string {
 	sort.Strings(names)
 	return names
 }
+
+// NoteXUID records a player's XUID if they are an operator and none is stored
+// yet. Operators can be added while offline, when only the name is known, so
+// this is how an entry eventually gains the stable identifier.
+//
+// It is a no-op for players who are not operators, and never overwrites an XUID
+// that is already recorded.
+func (s *Store) NoteXUID(name, xuid string) error {
+	if xuid == "" {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	key := strings.ToLower(name)
+	op, ok := s.ops[key]
+	if !ok || op.XUID != "" {
+		return nil
+	}
+	op.XUID = xuid
+	s.ops[key] = op
+	if err := s.save(); err != nil {
+		s.ops[key] = Operator{Name: op.Name}
+		return err
+	}
+	return nil
+}

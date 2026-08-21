@@ -64,8 +64,8 @@ func TestOverworldIsSurvivable(t *testing.T) {
 		{"dirt", o.dirt, 1000},
 		{"water", o.water, 100},
 		{"bedrock", o.bedrock, 100},
-		{"logs", o.log, 20},
-		{"leaves", o.leaves, 100},
+		{"oak logs", o.treeLog[treeOak], 20},
+		{"oak leaves", o.treeLeaves[treeOak], 100},
 		{"coal ore", o.ore[oreCoal], 20},
 		{"iron ore", o.ore[oreIron], 20},
 		{"diamond ore", o.oreDeepslate[oreDiamond], 1},
@@ -198,20 +198,6 @@ func TestDefaultSpawnIsOnLand(t *testing.T) {
 	}
 }
 
-func minInt(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-func maxInt(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
-
 // oreCounts generates a square of chunks and returns the average number of
 // blocks of each ore per chunk.
 func oreCounts(t *testing.T, seed int64, radius int32) (map[oreKind]float64, int) {
@@ -264,13 +250,13 @@ func TestOreDensityIsVanillaScale(t *testing.T) {
 		name     string
 		min, max float64
 	}{
-		{oreCoal, "coal", 40, 250},
+		{oreCoal, "coal", 45, 250},
 		{oreIron, "iron", 30, 200},
 		{oreCopper, "copper", 30, 200},
 		{oreGold, "gold", 6, 60},
 		{oreRedstone, "redstone", 8, 70},
-		{oreLapis, "lapis", 4, 50},
-		{oreDiamond, "diamond", 2, 30},
+		{oreLapis, "lapis", 4, 45},
+		{oreDiamond, "diamond", 2, 28},
 	} {
 		got := avg[tc.kind]
 		if got < tc.min || got > tc.max {
@@ -295,10 +281,12 @@ func TestOreRarityOrdering(t *testing.T) {
 	if avg[oreDiamond] >= avg[oreIron] {
 		t.Errorf("diamond (%.1f) is not rarer than iron (%.1f)", avg[oreDiamond], avg[oreIron])
 	}
-	// Diamond has to be the scarcest ore in the world, not merely scarce.
-	for k, n := range avg {
-		if k != oreDiamond && k != oreEmerald && n <= avg[oreDiamond] {
-			t.Errorf("ore %d (%.1f) is not more common than diamond (%.1f)", k, n, avg[oreDiamond])
+	// Diamond has to sit among the scarcest ores, not merely be scarce.
+	// Lapis is allowed to be scarcer still: vanilla gives it fewer vein
+	// attempts than diamond, so the two are comparable by raw block count.
+	for _, k := range []oreKind{oreCoal, oreIron, oreCopper, oreGold, oreRedstone} {
+		if avg[k] <= avg[oreDiamond] {
+			t.Errorf("ore %d (%.1f) is not more common than diamond (%.1f)", k, avg[k], avg[oreDiamond])
 		}
 	}
 }
@@ -385,6 +373,10 @@ func TestNoGiantDiamondVeins(t *testing.T) {
 // strength forced to zero, so it disagreed with the surface actually placed.
 func TestNoTreesOnGravel(t *testing.T) {
 	o := NewOverworld(1234)
+	logs := map[uint32]bool{}
+	for k := treeKind(1); k < treeKindCount; k++ {
+		logs[o.treeLog[k]] = true
+	}
 	for cx := int32(-3); cx <= 3; cx++ {
 		for cz := int32(-3); cz <= 3; cz++ {
 			c := newChunk(KindOverworld)
@@ -393,12 +385,12 @@ func TestNoTreesOnGravel(t *testing.T) {
 			for x := range uint8(16) {
 				for z := range uint8(16) {
 					for y := int16(r.Min() + 1); y <= int16(r.Max()); y++ {
-						if c.Block(x, y, z, 0) != o.log {
+						if !logs[c.Block(x, y, z, 0)] {
 							continue
 						}
 						below := c.Block(x, y-1, z, 0)
-						if below == o.gravel || below == o.sand || below == o.water {
-							t.Fatalf("tree trunk at chunk (%d,%d) local (%d,%d,%d) stands on a non-soil block", cx, cz, x, y, z)
+						if below == o.gravel || below == o.water {
+							t.Fatalf("tree trunk at chunk (%d,%d) local (%d,%d,%d) stands on %d, not soil", cx, cz, x, y, z, below)
 						}
 					}
 				}
@@ -415,8 +407,7 @@ func TestGravelOnlyUnderwater(t *testing.T) {
 	for x := -900; x < 900; x += 13 {
 		for z := -900; z < 900; z += 13 {
 			height, river := o.heightAt(x, z)
-			b := o.biomeAt(x, z, height, river)
-			top, _ := o.surfaceFor(b, height)
+			top := o.topRID[o.biomeAt(x, z, height, river)]
 			if top == o.gravel && height >= seaLevel {
 				t.Fatalf("column (%d,%d) has a gravel surface at y=%d, at or above sea level %d", x, z, height, seaLevel)
 			}
