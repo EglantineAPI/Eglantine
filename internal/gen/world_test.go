@@ -212,19 +212,28 @@ func TestPlantsStandOnSomething(t *testing.T) {
 // tunnels near the surface, and large open chambers down in the deepslate.
 func TestCaveShape(t *testing.T) {
 	o := NewOverworld(4242)
+	// The cave field is built per chunk, so the sample walks chunk by chunk.
 	measure := func(lo, hi int) float64 {
 		total, carved := 0, 0
-		for x := 0; x < 200; x += 2 {
-			for z := 0; z < 200; z += 2 {
-				h, _ := o.heightAt(x, z)
-				cc := o.columnCaveAt(x, z, h)
-				for y := lo; y < hi; y++ {
-					if y > h {
-						continue
-					}
-					total++
-					if o.carvedAt(x, y, z, h, cc) {
-						carved++
+		for cx := range 12 {
+			for cz := range 12 {
+				f := o.newCaveField(chunkPos{x: cx, z: cz})
+				var col caveColumn
+				for lx := 0; lx < 16; lx += 2 {
+					for lz := 0; lz < 16; lz += 2 {
+						x, z := cx*16+lx, cz*16+lz
+						h, _ := o.heightAt(x, z)
+						cc := o.columnCaveAt(x, z, h)
+						f.column(x, z, &col)
+						for y := lo; y < hi; y++ {
+							if y > h {
+								continue
+							}
+							total++
+							if o.carvedAt(&col, x, y, z, h, cc) {
+								carved++
+							}
+						}
 					}
 				}
 			}

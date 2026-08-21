@@ -252,6 +252,8 @@ func (o *Overworld) GenerateChunk(pos world.ChunkPos, c *chunk.Chunk) {
 func (o *Overworld) generateTerrain(pos chunkPos, c *chunk.Chunk, cols *columns) {
 	min, max := int16(c.Range().Min()), int16(c.Range().Max())
 	baseX, baseZ := pos.x*16, pos.z*16
+	caves := o.newCaveField(pos)
+	var caveCol caveColumn
 
 	for lx := range 16 {
 		for lz := range 16 {
@@ -266,6 +268,7 @@ func (o *Overworld) generateTerrain(pos chunkPos, c *chunk.Chunk, cols *columns)
 			}
 
 			cc := o.columnCaveAt(wx, wz, height)
+			caves.column(wx, wz, &caveCol)
 			bid, top, filler := o.biomeID[kind], o.topRID[kind], o.fillerRID[kind]
 			if height < seaLevel {
 				top, filler = o.seabedAt(wx, wz, seaLevel-height)
@@ -296,7 +299,7 @@ func (o *Overworld) generateTerrain(pos chunkPos, c *chunk.Chunk, cols *columns)
 
 				// Carve before deciding on a block, so a carved cell can still
 				// flood with lava at the very bottom.
-				if o.carvedAt(wx, wy, wz, height, cc) {
+				if o.carvedAt(&caveCol, wx, wy, wz, height, cc) {
 					if wy < -50 {
 						c.SetBlock(x, y, z, 0, o.lava)
 					}

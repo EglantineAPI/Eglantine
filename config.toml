@@ -13,7 +13,7 @@ Folder = 'worlds/world'
 
 [Players]
 MaxCount = 0
-MaximumChunkRadius = 32
+MaximumChunkRadius = 12
 SaveData = true
 Folder = 'players'
 

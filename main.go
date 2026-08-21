@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"runtime"
 
 	"github.com/df-mc/dragonfly/server"
 	"github.com/df-mc/dragonfly/server/player/chat"
@@ -50,13 +51,14 @@ func main() {
 	// one saved in it cannot read it back.
 	entities := mob.Registry()
 	conf.Entities = entities
+	conf.ChunkLoadWorkers = chunkWorkers()
 
 	// conf.New finalizes the block registry. Generators resolve blocks to
 	// runtime IDs, which panics before that, so nothing may build one until
 	// this call has returned.
 	srv := conf.New()
 
-	mgr, err := worlds.New(worldsDir, log, entities, map[string]*world.World{
+	mgr, err := worlds.New(worldsDir, log, entities, conf.ChunkLoadWorkers, map[string]*world.World{
 		"world":  srv.World(),
 		"nether": srv.Nether(),
 		"end":    srv.End(),
@@ -98,6 +100,23 @@ func main() {
 	if err := mgr.Close(); err != nil {
 		log.Error("Could not close worlds.", "error", err)
 	}
+}
+
+// chunkWorkers returns how many goroutines should generate and load chunks.
+//
+// Dragonfly defaults to one, and a single worker is also the case where it
+// serialises the generator behind a mutex. A joining player asks for the whole
+// square of chunks around them at once — over a thousand even at a modest view
+// distance — so one worker means the player waits for all of them in sequence
+// and the world appears frozen until it finishes.
+//
+// One core is left to the world tick, so generating chunks cannot starve the
+// server itself.
+func chunkWorkers() int {
+	if n := runtime.NumCPU() - 1; n > 1 {
+		return n
+	}
+	return 2
 }
 
 // generatorFor returns the generator for one of the server's built-in worlds.
