@@ -7,7 +7,6 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"sort"
 	"strings"
 	"sync"
 
@@ -82,14 +81,13 @@ func (c *Console) Execute(line string) {
 	name, args, _ := strings.Cut(line, " ")
 
 	switch strings.ToLower(name) {
-	case "help", "?":
-		c.help()
-		return
-	case "stop", "quit", "exit":
+	case "quit", "exit":
 		fmt.Fprintln(c.out, "Stopping the server...")
 		c.shutdown()
 		return
 	}
+	// help and stop are ordinary registered commands, so they fall through to
+	// the dispatch below and there is only one implementation of each.
 
 	command, ok := cmd.ByAlias(strings.ToLower(name))
 	if !ok {
@@ -99,29 +97,6 @@ func (c *Console) Execute(line string) {
 	// The console belongs to no world, so the transaction is nil. Dragonfly
 	// documents this and Runnables are expected to handle it.
 	command.Execute(args, c, nil)
-}
-
-// help prints every registered command.
-func (c *Console) help() {
-	registered := cmd.Commands()
-	// cmd.Commands is keyed by alias, so a command with aliases appears more
-	// than once. Collapse it back to one line per command name.
-	unique := map[string]cmd.Command{}
-	for _, command := range registered {
-		unique[command.Name()] = command
-	}
-	names := make([]string, 0, len(unique)+2)
-	for name := range unique {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-
-	fmt.Fprintln(c.out, "Commands:")
-	for _, name := range names {
-		fmt.Fprintf(c.out, "  %-10s %s\n", name, unique[name].Description())
-	}
-	fmt.Fprintf(c.out, "  %-10s %s\n", "help", "Show this list.")
-	fmt.Fprintf(c.out, "  %-10s %s\n", "stop", "Shut the server down.")
 }
 
 func (c *Console) shutdown() {
