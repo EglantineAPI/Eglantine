@@ -14,6 +14,8 @@ import (
 	"github.com/df-mc/dragonfly/server/player/title"
 	"github.com/df-mc/dragonfly/server/world"
 	"github.com/go-gl/mathgl/mgl64"
+
+	"server/internal/mob"
 )
 
 // targets resolves an optional target list to players. When no target is given
@@ -357,4 +359,49 @@ func maxIntC(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// summonCommand places a mob in the world.
+//
+// The mobs this server has do not spawn on their own and have no AI, so this is
+// the only way one appears at all.
+type summonCommand struct {
+	Mob      mobEnum                  `cmd:"mob"`
+	Position cmd.Optional[mgl64.Vec3] `cmd:"position"`
+	NameTag  cmd.Optional[string]     `cmd:"nametag"`
+}
+
+func (summonCommand) Allow(src cmd.Source) bool { return operator(src) }
+
+func (c summonCommand) Run(src cmd.Source, o *cmd.Output, tx *world.Tx) {
+	t, ok := mob.Lookup(string(c.Mob))
+	if !ok {
+		o.Errorf("Unknown mob %q.", string(c.Mob))
+		return
+	}
+	pos, given := c.Position.Load()
+	if !given {
+		p, isPlayer := src.(*player.Player)
+		if !isPlayer {
+			o.Error("Give a position when running this from the console.")
+			return
+		}
+		pos = p.Position()
+	}
+
+	place := func(tx *world.Tx) {
+		handle := mob.Spawn(t, pos)
+		e := tx.AddEntity(handle)
+		if tag, ok := c.NameTag.Load(); ok && tag != "" {
+			if named, ok := e.(interface {
+				SetNameTag(string)
+				SetAlwaysShowNameTag(bool)
+			}); ok {
+				named.SetNameTag(tag)
+				named.SetAlwaysShowNameTag(true)
+			}
+		}
+	}
+	inWorld(tx, o, place)
+	o.Printf("Summoned %s at %.0f %.0f %.0f.", t.Name(), pos[0], pos[1], pos[2])
 }

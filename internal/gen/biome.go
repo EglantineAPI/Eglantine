@@ -14,7 +14,9 @@ type biomeKind uint8
 const (
 	bOcean biomeKind = iota
 	bDeepOcean
+	bFrozenOcean
 	bRiver
+	bFrozenRiver
 	bBeach
 	bSnowyBeach
 	bStonyShore
@@ -74,7 +76,11 @@ func init() {
 		bOcean:     {biome: biome.Ocean{}, top: gravel, filler: dirt},
 		bDeepOcean: {biome: biome.DeepOcean{}, top: gravel, filler: gravel},
 		bRiver:     {biome: biome.River{}, top: sand, filler: dirt},
-		bBeach:     {biome: biome.Beach{}, top: sand, filler: sand},
+		// Cold water freezes over. The ice itself is laid down by the terrain
+		// pass, which is the only place that knows where the surface is.
+		bFrozenOcean: {biome: biome.FrozenOcean{}, top: gravel, filler: dirt},
+		bFrozenRiver: {biome: biome.FrozenRiver{}, top: sand, filler: dirt},
+		bBeach:       {biome: biome.Beach{}, top: sand, filler: sand},
 		// A cold coast is a snowy beach, not a tropical one washed up beside an
 		// ice field. Dragonfly has no ice block, so the water itself cannot be
 		// frozen over; the shore at least reads as cold.
@@ -158,18 +164,28 @@ func (o *Overworld) steepInland(x, z, height int) bool {
 // they describe where a column sits rather than its climate. Only what is left
 // over is chosen from temperature and rainfall.
 func (o *Overworld) biomeAt(x, z, height int, river float64) biomeKind {
+	temp := o.climate.fbm(float64(x), float64(z), 3, 1.0/620.0, 0.5) * 1.7
+	rain := o.humid.fbm(float64(x)+500, float64(z)+500, 3, 1.0/540.0, 0.5) * 1.7
+
 	if height < seaLevel {
+		// Water in a cold climate freezes over. Without this, a snowfield ran
+		// straight into open water, which is the one thing a snowy shore never
+		// looks like.
+		frozen := temp < -0.30
 		if river > 0.30 {
+			if frozen {
+				return bFrozenRiver
+			}
 			return bRiver
+		}
+		if frozen {
+			return bFrozenOcean
 		}
 		if height < seaLevel-22 {
 			return bDeepOcean
 		}
 		return bOcean
 	}
-
-	temp := o.climate.fbm(float64(x), float64(z), 3, 1.0/620.0, 0.5) * 1.7
-	rain := o.humid.fbm(float64(x)+500, float64(z)+500, 3, 1.0/540.0, 0.5) * 1.7
 
 	if height <= beachTop {
 		if temp < -0.30 {

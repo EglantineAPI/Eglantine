@@ -9,6 +9,8 @@ import (
 	"github.com/df-mc/dragonfly/server/entity/effect"
 	"github.com/df-mc/dragonfly/server/item"
 	"github.com/df-mc/dragonfly/server/world"
+
+	"server/internal/mob"
 )
 
 // The command system builds an enum's options every time it describes a command
@@ -256,3 +258,10 @@ func (gameRuleEnum) Type() string { return "GameRule" }
 func (gameRuleEnum) Options(cmd.Source) []string {
 	return []string{"dodaylightcycle", "doweathercycle", "randomtickspeed", "showcoordinates"}
 }
+
+// mobEnum completes the mob names the server can place.
+type mobEnum string
+
+func (mobEnum) Type() string { return "Mob" }
+
+func (mobEnum) Options(cmd.Source) []string { return mob.Names() }

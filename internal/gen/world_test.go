@@ -437,3 +437,72 @@ func TestColdCoastsAreSnowy(t *testing.T) {
 		t.Error("no ordinary beaches at all")
 	}
 }
+
+// TestColdWaterFreezes is the regression for snowfields running straight into
+// open water. Ice has no Go type in Dragonfly but is a registered block state,
+// so it resolves by name.
+func TestColdWaterFreezes(t *testing.T) {
+	o := NewOverworld(1234)
+	if o.ice == o.water || o.ice == 0 {
+		t.Fatalf("ice did not resolve; got runtime ID %d", o.ice)
+	}
+
+	frozenColumns, iceBlocks := 0, 0
+	for cx := int32(-6); cx <= 6; cx++ {
+		for cz := int32(-6); cz <= 6; cz++ {
+			c := newChunk(KindOverworld)
+			o.GenerateChunk(world.ChunkPos{cx, cz}, c)
+			for x := range uint8(16) {
+				for z := range uint8(16) {
+					wx, wz := int(cx)*16+int(x), int(cz)*16+int(z)
+					h, river := o.heightAt(wx, wz)
+					kind := o.biomeAt(wx, wz, h, river)
+					if kind != bFrozenOcean && kind != bFrozenRiver {
+						continue
+					}
+					frozenColumns++
+					top := c.Block(x, int16(seaLevel), z, 0)
+					if top != o.ice {
+						t.Fatalf("frozen biome column at (%d,%d) has %d on the surface, not ice", wx, wz, top)
+					}
+					iceBlocks++
+					// There has to be water under the sheet, not a void.
+					if below := c.Block(x, int16(seaLevel-1), z, 0); below != o.water && below == o.air {
+						t.Fatalf("nothing under the ice at (%d,%d)", wx, wz)
+					}
+				}
+			}
+		}
+	}
+	if frozenColumns == 0 {
+		t.Skip("no frozen water in the sampled area")
+	}
+	t.Logf("%d frozen columns, all capped with ice", iceBlocks)
+}
+
+// TestAzaleaGrowsInLushCaves checks the lush pockets got their bush.
+func TestAzaleaGrowsInLushCaves(t *testing.T) {
+	o := NewOverworld(1234)
+	if o.azalea == 0 {
+		t.Fatal("azalea did not resolve")
+	}
+	found := 0
+	for cx := int32(-6); cx <= 6; cx++ {
+		for cz := int32(-6); cz <= 6; cz++ {
+			c := newChunk(KindOverworld)
+			o.GenerateChunk(world.ChunkPos{cx, cz}, c)
+			for x := range uint8(16) {
+				for z := range uint8(16) {
+					for y := int16(c.Range().Min()); y <= int16(24); y++ {
+						if c.Block(x, y, z, 0) == o.azalea {
+							found++
+						}
+					}
+				}
+			}
+		}
+	}
+	if found == 0 {
+		t.Error("no azalea anywhere in 169 chunks of lush caves")
+	}
+}

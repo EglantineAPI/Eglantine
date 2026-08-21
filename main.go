@@ -13,6 +13,7 @@ import (
 	"server/internal/commands"
 	"server/internal/console"
 	"server/internal/gen"
+	"server/internal/mob"
 	"server/internal/perm"
 	"server/internal/worlds"
 )
@@ -45,13 +46,17 @@ func main() {
 	conf.Generator = func(dim world.Dimension) world.Generator {
 		return generatorFor(dim, seed)
 	}
+	// Mobs have to be registered before any world opens, or a world that has
+	// one saved in it cannot read it back.
+	entities := mob.Registry()
+	conf.Entities = entities
 
 	// conf.New finalizes the block registry. Generators resolve blocks to
 	// runtime IDs, which panics before that, so nothing may build one until
 	// this call has returned.
 	srv := conf.New()
 
-	mgr, err := worlds.New(worldsDir, log, map[string]*world.World{
+	mgr, err := worlds.New(worldsDir, log, entities, map[string]*world.World{
 		"world":  srv.World(),
 		"nether": srv.Nether(),
 		"end":    srv.End(),
