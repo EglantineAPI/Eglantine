@@ -11,41 +11,43 @@ import (
 // seaLevel is the y at and below which open air is filled with water.
 const seaLevel = 62
 
-// Overworld generates survivable terrain: rolling land shaped by fractal
-// noise, climate-driven biomes, oceans and rivers, ore veins spread by depth,
-// noise-carved caves with lava at the bottom, and trees on the surface.
+// chunkPos is a chunk coordinate in ints, which is easier to do arithmetic with
+// than world.ChunkPos.
+type chunkPos struct{ x, z int }
+
+// columns caches what the terrain pass decided for each column of a chunk, so
+// later passes agree with the blocks actually placed.
 //
-// It is deliberately not a reimplementation of vanilla generation. There are
-// no structures, and a given seed does not match the world the same seed makes
-// in Bedrock. What it guarantees is a world you can survive in.
+// Recomputing a column's biome in a later pass is not equivalent: the biome
+// depends on the river field as well as the height, and getting that argument
+// wrong is what once put trees on river gravel.
+type columns struct {
+	height [16][16]int
+	top    [16][16]uint32
+	biome  [16][16]world.Biome
+	// hasMountain records whether any column is a peak biome, letting the ore
+	// pass skip emerald entirely almost everywhere.
+	hasMountain bool
+}
+
+// Overworld generates survivable terrain: rolling land shaped by fractal noise,
+// climate-driven biomes, oceans and rivers, noise-carved caves with lava at the
+// bottom, trees on the surface, and ore placed to vanilla's own table.
+//
+// It is deliberately not a reimplementation of vanilla generation. There are no
+// structures, and a given seed does not match the world the same seed makes in
+// Bedrock. What it guarantees is a world you can survive in.
 type Overworld struct {
 	terrain, climate, humid, cave, river *perlin
 	seed                                 int64
 
 	// Runtime IDs are resolved once, since resolving a block on every one of
-	// the ~98k column positions in a chunk would dominate generation time.
+	// the ~98k positions in a chunk would dominate generation time.
 	air, stone, deepslate, dirt, grass, sand, gravel, snow uint32
 	water, lava, bedrock, log, leaves                      uint32
-	oreStone, oreDeep                                      [6]uint32
-}
 
-// oreSpec describes where a single ore type may appear and how common it is.
-type oreSpec struct {
-	minY, maxY int
-	// chance is the per-block probability of starting a vein, scaled by 1e-4.
-	chance int
-	// size is the number of blocks placed once a vein starts.
-	size int
-}
-
-// oreSpecs is indexed in step with the oreStone and oreDeep runtime ID arrays.
-var oreSpecs = [6]oreSpec{
-	{minY: -60, maxY: 128, chance: 90, size: 12}, // coal
-	{minY: -60, maxY: 64, chance: 60, size: 8},   // iron
-	{minY: -60, maxY: 30, chance: 20, size: 6},   // gold
-	{minY: -60, maxY: 14, chance: 8, size: 5},    // diamond
-	{minY: -60, maxY: 15, chance: 22, size: 7},   // redstone
-	{minY: -60, maxY: 30, chance: 10, size: 6},   // lapis
+	// ore and oreDeepslate are indexed by oreKind.
+	ore, oreDeepslate [oreKindCount]uint32
 }
 
 // NewOverworld builds an Overworld generator for the seed passed. Worlds
@@ -78,33 +80,25 @@ func NewOverworld(seed int64) *Overworld {
 		log:       rid(block.Log{Wood: block.OakWood(), Axis: cube.Y}),
 		leaves:    rid(block.Leaves{Type: block.OakLeaves(), Persistent: true}),
 	}
-	stoneOres := []world.Block{
-		block.CoalOre{Type: block.StoneOre()},
-		block.IronOre{Type: block.StoneOre()},
-		block.GoldOre{Type: block.StoneOre()},
-		block.DiamondOre{Type: block.StoneOre()},
-		block.RedstoneOre{Type: block.StoneOre()},
-		block.LapisOre{Type: block.StoneOre()},
-	}
-	deepOres := []world.Block{
-		block.CoalOre{Type: block.DeepslateOre()},
-		block.IronOre{Type: block.DeepslateOre()},
-		block.GoldOre{Type: block.DeepslateOre()},
-		block.DiamondOre{Type: block.DeepslateOre()},
-		block.RedstoneOre{Type: block.DeepslateOre()},
-		block.LapisOre{Type: block.DeepslateOre()},
-	}
-	for i := range stoneOres {
-		o.oreStone[i] = rid(stoneOres[i])
-		o.oreDeep[i] = rid(deepOres[i])
+
+	stone, deep := block.StoneOre(), block.DeepslateOre()
+	for kind, pair := range map[oreKind][2]world.Block{
+		oreCoal:     {block.CoalOre{Type: stone}, block.CoalOre{Type: deep}},
+		oreIron:     {block.IronOre{Type: stone}, block.IronOre{Type: deep}},
+		oreCopper:   {block.CopperOre{Type: stone}, block.CopperOre{Type: deep}},
+		oreGold:     {block.GoldOre{Type: stone}, block.GoldOre{Type: deep}},
+		oreRedstone: {block.RedstoneOre{Type: stone}, block.RedstoneOre{Type: deep}},
+		oreDiamond:  {block.DiamondOre{Type: stone}, block.DiamondOre{Type: deep}},
+		oreLapis:    {block.LapisOre{Type: stone}, block.LapisOre{Type: deep}},
+		oreEmerald:  {block.EmeraldOre{Type: stone}, block.EmeraldOre{Type: deep}},
+	} {
+		o.ore[kind] = rid(pair[0])
+		o.oreDeepslate[kind] = rid(pair[1])
 	}
 	return o
 }
 
-// hash mixes a coordinate triple and the seed into a well-distributed uint64,
-// giving decisions that depend only on position and seed. Using a hash rather
-// than a rand.Source keeps generation reproducible under the concurrent
-// GenerateChunk calls Dragonfly makes.
+// hash mixes a coordinate triple and the seed into a well-distributed uint64.
 func (o *Overworld) hash(x, y, z int, salt uint64) uint64 {
 	return hashMix(x, y, z, uint64(o.seed)+salt)
 }
@@ -137,12 +131,16 @@ func (o *Overworld) heightAt(x, z int) (int, float64) {
 		h = base + hills*13 + ridge*ridge*ridge*78*land
 	}
 
-	// Rivers cut narrow channels wherever a separate noise field crosses zero.
 	riverN := o.river.fbm(fx, fz, 2, 1.0/700.0, 0.5)
 	strength := 0.0
 	if w := 0.045; riverN > -w && riverN < w && continent >= -0.10 {
 		strength = 1 - absF(riverN)/w
-		h -= strength * 9
+		// Pull the channel floor below sea level so the river actually holds
+		// water. Blending the height instead of subtracting a fixed amount is
+		// what keeps a river through high ground from becoming a dry canyon of
+		// bare gravel.
+		smooth := strength * strength * (3 - 2*strength)
+		h = h*(1-smooth) + (float64(seaLevel)-3)*smooth
 	}
 	return int(h), strength
 }
@@ -166,12 +164,16 @@ func absF(v float64) float64 {
 }
 
 // biomeAt picks a biome from climate, height and river state.
+//
+// Ocean and river are only ever chosen for a submerged column. A river biome on
+// dry land would surface as a strip of gravel with no water in it, which is not
+// a biome the game has.
 func (o *Overworld) biomeAt(x, z, height int, river float64) world.Biome {
-	if height < seaLevel-5 {
+	if height < seaLevel {
+		if river > 0.35 {
+			return biome.River{}
+		}
 		return biome.Ocean{}
-	}
-	if river > 0 {
-		return biome.River{}
 	}
 	if height <= seaLevel+2 {
 		return biome.Beach{}
@@ -204,15 +206,14 @@ func (o *Overworld) biomeAt(x, z, height int, river float64) world.Biome {
 }
 
 // surfaceFor returns the top block and the block filling the few layers under
-// it for the biome passed.
+// it. Submerged columns get a river or sea bed rather than a land surface.
 func (o *Overworld) surfaceFor(b world.Biome, height int) (top, filler uint32) {
-	switch b.(type) {
-	case biome.Desert:
-		return o.sand, o.sand
-	case biome.Beach:
-		return o.sand, o.sand
-	case biome.Ocean, biome.River:
+	if height < seaLevel {
 		return o.gravel, o.dirt
+	}
+	switch b.(type) {
+	case biome.Desert, biome.Beach:
+		return o.sand, o.sand
 	case biome.SnowyPlains, biome.FrozenPeaks:
 		return o.snow, o.dirt
 	case biome.StonyPeaks:
@@ -224,35 +225,48 @@ func (o *Overworld) surfaceFor(b world.Biome, height int) (top, filler uint32) {
 	return o.grass, o.dirt
 }
 
-// GenerateChunk implements world.Generator.
+// GenerateChunk implements world.Generator. It runs three passes: terrain,
+// then ore, then decoration. Ore has to see the finished stone, and decoration
+// has to see the finished surface.
 func (o *Overworld) GenerateChunk(pos world.ChunkPos, c *chunk.Chunk) {
-	min, max := int16(c.Range().Min()), int16(c.Range().Max())
-	baseX, baseZ := int(pos.X())*16, int(pos.Z())*16
+	cp := chunkPos{x: int(pos.X()), z: int(pos.Z())}
+	cols := &columns{}
+	o.generateTerrain(cp, c, cols)
+	o.placeOres(cp, c, cols)
+	o.decorate(c, cols)
+}
 
-	// Heights are needed again during decoration, so keep them for the chunk.
-	var heights [16][16]int
+// generateTerrain lays down stone, surface, water and bedrock, and carves caves.
+func (o *Overworld) generateTerrain(pos chunkPos, c *chunk.Chunk, cols *columns) {
+	min, max := int16(c.Range().Min()), int16(c.Range().Max())
+	baseX, baseZ := pos.x*16, pos.z*16
 
 	for lx := range 16 {
 		for lz := range 16 {
 			wx, wz := baseX+lx, baseZ+lz
 			height, river := o.heightAt(wx, wz)
-			heights[lx][lz] = height
-
 			b := o.biomeAt(wx, wz, height, river)
-			bid := uint32(b.EncodeBiome())
 			top, filler := o.surfaceFor(b, height)
 
+			cols.height[lx][lz] = height
+			cols.biome[lx][lz] = b
+			cols.top[lx][lz] = top
+			switch b.(type) {
+			case biome.StonyPeaks, biome.FrozenPeaks:
+				cols.hasMountain = true
+			}
+
+			bid := uint32(b.EncodeBiome())
 			x, z := uint8(lx), uint8(lz)
 			for y := min; y <= max; y++ {
 				c.SetBiome(x, y, z, bid)
 
 				wy := int(y)
 				switch {
-				case wy <= int(min)+o.bedrockDepth(wx, wy, wz):
+				case wy <= int(min)+o.bedrockDepth(wx, wz):
 					c.SetBlock(x, y, z, 0, o.bedrock)
 					continue
 				case wy > height:
-					// Open air: water down to sea level, otherwise nothing.
 					if wy <= seaLevel {
 						c.SetBlock(x, y, z, 0, o.water)
 					}
@@ -273,93 +287,43 @@ func (o *Overworld) GenerateChunk(pos world.ChunkPos, c *chunk.Chunk) {
 					c.SetBlock(x, y, z, 0, top)
 				case wy > height-4:
 					c.SetBlock(x, y, z, 0, filler)
+				case wy < 0:
+					c.SetBlock(x, y, z, 0, o.deepslate)
 				default:
-					c.SetBlock(x, y, z, 0, o.stoneAt(wx, wy, wz))
+					c.SetBlock(x, y, z, 0, o.stone)
 				}
 			}
 		}
 	}
-	o.decorate(pos, c, &heights)
 }
 
 // bedrockDepth returns how many layers of bedrock cover this column, giving the
 // floor a ragged rather than a perfectly flat underside.
-func (o *Overworld) bedrockDepth(x, y, z int) int {
+func (o *Overworld) bedrockDepth(x, z int) int {
 	return int(o.hash(x, 0, z, 0x8ed7) % 4)
 }
 
 // carved reports whether a cell is hollowed out by the cave system. Caves stop
 // short of the surface so the terrain is not perforated from above.
 func (o *Overworld) carved(x, y, z, height int) bool {
-	if y > height-6 || y < -58 {
+	if y > height-6 || y < -60 {
 		return false
+	}
+	// The deepslate layer is far more riddled with caves than the stone above
+	// it, as it is in vanilla. That is also what keeps deep ore honest: the
+	// rare ores lean on discarding blocks that touch air, and a solid deep
+	// layer would leave every one of them in place.
+	threshold := 0.13
+	if y < 0 {
+		threshold = 0.20
 	}
 	// Two independent fields intersected produce tunnels rather than blobs.
 	a := o.cave.fbm3(float64(x), float64(y)*2.4, float64(z), 2, 1.0/48.0, 0.5)
-	if absF(a) > 0.13 {
+	if absF(a) > threshold {
 		return false
 	}
 	b := o.cave.fbm3(float64(x)+700, float64(y)*2.4, float64(z)-700, 2, 1.0/48.0, 0.5)
-	return absF(b) <= 0.13
-}
-
-// stoneAt returns the stone-family block for a position, folding in ore veins.
-func (o *Overworld) stoneAt(x, y, z int) uint32 {
-	base := o.stone
-	deep := y < 0
-	if deep {
-		base = o.deepslate
-	}
-	for i, spec := range oreSpecs {
-		if y < spec.minY || y > spec.maxY {
-			continue
-		}
-		// A vein starts at this block, or this block sits inside one that
-		// started nearby. Checking a small neighbourhood keeps veins contiguous
-		// without carrying state between columns.
-		if int(o.hash(x, y, z, uint64(i)*0x51ed)%10000) < spec.chance {
-			if deep {
-				return o.oreDeep[i]
-			}
-			return o.oreStone[i]
-		}
-		if o.inVein(x, y, z, i, spec) {
-			if deep {
-				return o.oreDeep[i]
-			}
-			return o.oreStone[i]
-		}
-	}
-	return base
-}
-
-// inVein reports whether a nearby block started a vein of ore i that reaches
-// the position passed.
-func (o *Overworld) inVein(x, y, z, i int, spec oreSpec) bool {
-	// radius grows with vein size but stays small; the loop below is 27 hashes
-	// at radius 1, which is affordable per stone block.
-	const radius = 1
-	for dx := -radius; dx <= radius; dx++ {
-		for dy := -radius; dy <= radius; dy++ {
-			for dz := -radius; dz <= radius; dz++ {
-				if dx == 0 && dy == 0 && dz == 0 {
-					continue
-				}
-				nx, ny, nz := x+dx, y+dy, z+dz
-				if ny < spec.minY || ny > spec.maxY {
-					continue
-				}
-				if int(o.hash(nx, ny, nz, uint64(i)*0x51ed)%10000) < spec.chance {
-					// The neighbour is a vein origin; extend it here when the
-					// vein is large enough to cover the offset.
-					if spec.size > 4 {
-						return true
-					}
-				}
-			}
-		}
-	}
-	return false
+	return absF(b) <= threshold
 }
 
 // treeChanceFor returns the per-column probability of a tree, scaled by 1e-4.
@@ -380,35 +344,33 @@ func treeChanceFor(b world.Biome) int {
 	}
 }
 
-// decorate places trees. It runs after the terrain pass so it can read the
-// finished heightmap for the chunk.
-func (o *Overworld) decorate(pos world.ChunkPos, c *chunk.Chunk, heights *[16][16]int) {
+// decorate places trees, reading the biome and surface the terrain pass
+// actually used rather than recomputing them.
+func (o *Overworld) decorate(c *chunk.Chunk, cols *columns) {
 	maxY := int(c.Range().Max())
-	baseX, baseZ := int(pos.X())*16, int(pos.Z())*16
 
 	// Trees are kept two blocks clear of the chunk edge. A tree straddling the
 	// border would need to write into a neighbouring chunk, which GenerateChunk
 	// cannot do.
 	for lx := 2; lx < 14; lx++ {
 		for lz := 2; lz < 14; lz++ {
-			wx, wz := baseX+lx, baseZ+lz
-			height := heights[lx][lz]
-			if height <= seaLevel+1 {
+			height := cols.height[lx][lz]
+			// Only grow on a grass top, which rules out sand, stone, snow and
+			// the gravel of a river or sea bed.
+			if cols.top[lx][lz] != o.grass || height <= seaLevel {
 				continue
 			}
-			b := o.biomeAt(wx, wz, height, 0)
-			chance := treeChanceFor(b)
+			chance := treeChanceFor(cols.biome[lx][lz])
 			if chance == 0 {
 				continue
 			}
-			if int(o.hash(wx, 0, wz, 0x7ee5)%10000) >= chance {
+			// Local coordinates are enough here: two columns in different
+			// chunks never share one, because the hash also takes the height.
+			h := o.hash(lx, height, lz, uint64(cols.height[0][0])*31+0x7ee5)
+			if int(h%10000) >= chance {
 				continue
 			}
-			// Only grow on a grass top, so trees never sprout on sand or stone.
-			if top, _ := o.surfaceFor(b, height); top != o.grass {
-				continue
-			}
-			o.placeTree(c, lx, height+1, lz, maxY, o.hash(wx, 1, wz, 0x7ee5))
+			o.placeTree(c, lx, height+1, lz, maxY, h)
 		}
 	}
 }
