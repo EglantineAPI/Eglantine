@@ -45,7 +45,7 @@ type Overworld struct {
 	// Runtime IDs are resolved once, since resolving a block on every one of
 	// the ~98k positions in a chunk would dominate generation time.
 	air, stone, deepslate, dirt, grass, sand, gravel, snow, podzol uint32
-	water, lava, bedrock                                           uint32
+	water, lava, bedrock, clay                                     uint32
 
 	// Per-biome surface, indexed by biomeKind.
 	biomeID, topRID, fillerRID [biomeKindCount]uint32
@@ -55,6 +55,7 @@ type Overworld struct {
 	ore, oreDeepslate [oreKindCount]uint32
 
 	plants plants
+	ores   *veinField
 }
 
 // NewOverworld builds an Overworld generator for the seed passed. Worlds
@@ -88,6 +89,7 @@ func NewOverworld(seed int64) *Overworld {
 		water:     rid(block.Water{Still: true, Depth: 8}),
 		lava:      rid(block.Lava{Still: true, Depth: 8}),
 		bedrock:   rid(block.Bedrock{}),
+		clay:      rid(block.Clay{}),
 	}
 
 	for k := biomeKind(0); k < biomeKindCount; k++ {
@@ -113,6 +115,7 @@ func NewOverworld(seed int64) *Overworld {
 		o.ore[kind] = rid(pair[0])
 		o.oreDeepslate[kind] = rid(pair[1])
 	}
+	o.ores = o.buildOreField()
 	return o
 }
 
@@ -194,6 +197,32 @@ func absI(v int) int {
 	return v
 }
 
+// seabedAt returns the top and filler blocks of a submerged column.
+//
+// A sea floor of nothing but gravel reads as a single grey sheet. Vanilla mixes
+// sand in the shallows with gravel, dirt and clay patches further out, and the
+// mix is what makes a coastline look like a coastline.
+func (o *Overworld) seabedAt(x, z, depth int) (top, filler uint32) {
+	patch := o.humid.fbm(float64(x)+7700, float64(z)-7700, 2, 1.0/40.0, 0.5) * 1.8
+
+	switch {
+	case depth <= 4:
+		// Shallows are sandy, shading into gravel where the patch field dips.
+		if patch < -0.35 {
+			return o.gravel, o.gravel
+		}
+		return o.sand, o.sand
+	case patch > 0.45:
+		return o.clay, o.clay
+	case patch < -0.30:
+		return o.gravel, o.gravel
+	case patch > 0.05:
+		return o.sand, o.dirt
+	default:
+		return o.dirt, o.dirt
+	}
+}
+
 // GenerateChunk implements world.Generator. It runs three passes: terrain, then
 // ore, then decoration. Ore has to see the finished stone, and decoration has
 // to see the finished surface.
@@ -201,7 +230,7 @@ func (o *Overworld) GenerateChunk(pos world.ChunkPos, c *chunk.Chunk) {
 	cp := chunkPos{x: int(pos.X()), z: int(pos.Z())}
 	cols := &columns{}
 	o.generateTerrain(cp, c, cols)
-	o.placeOres(cp, c, cols)
+	o.ores.place(cp, c, cols.hasMountain)
 	o.decorate(c, cp, cols)
 }
 
@@ -225,6 +254,9 @@ func (o *Overworld) generateTerrain(pos chunkPos, c *chunk.Chunk, cols *columns)
 
 			cc := o.columnCaveAt(wx, wz, height)
 			bid, top, filler := o.biomeID[kind], o.topRID[kind], o.fillerRID[kind]
+			if height < seaLevel {
+				top, filler = o.seabedAt(wx, wz, seaLevel-height)
+			}
 
 			x, z := uint8(lx), uint8(lz)
 			for y := min; y <= max; y++ {

@@ -59,6 +59,9 @@ func (o *Overworld) decorate(c *chunk.Chunk, pos chunkPos, cols *columns) {
 			o.growLand(c, lx, height, lz, wx, wz, kind, info, top, maxY)
 		}
 	}
+	// The lake runs after the ground cover so it can clear whatever grew
+	// where it lands.
+	o.growLavaLake(c, pos, cols)
 	o.decorateLushCaves(c, pos, cols)
 }
 
@@ -140,7 +143,7 @@ func (o *Overworld) growDesert(c *chunk.Chunk, lx, above, lz, wx, wz int, top ui
 
 // growWater places what grows under and on the water of a submerged column.
 //
-// Dragonfly has no seagrass block, so the underwater cover here is kelp in the
+// Dragonfly has no seagrass block, so the underwater cover is kelp in the
 // deeper columns and lily pads on the calm shallow ones.
 func (o *Overworld) growWater(c *chunk.Chunk, lx, height, lz int, kind biomeKind, wx, wz int) {
 	depth := seaLevel - height
@@ -155,13 +158,31 @@ func (o *Overworld) growWater(c *chunk.Chunk, lx, height, lz int, kind biomeKind
 		// A stalk of kelp rising most of the way to the surface.
 		stalk := 2 + int(h>>20)%(depth-1)
 		for i := range stalk {
-			setIfInside(c, lx, height+1+i, lz, o.plants.kelp)
+			o.setWaterlogged(c, lx, height+1+i, lz, o.plants.kelp)
 		}
 	case kind == bRiver && depth <= 3 && roll < 260:
 		// The pad floats on the surface, so it goes in the air block above the
 		// top water block rather than replacing it.
 		setIfInside(c, lx, seaLevel+1, lz, o.plants.lilyPad)
 	}
+}
+
+// setWaterlogged places a plant that lives inside water.
+//
+// A chunk holds two block layers per position: the block itself and the liquid
+// around it. Writing only the first layer removes the water the plant was
+// standing in, and kelp with no water around it breaks the moment the chunk is
+// ticked. The water has to be written back on the second layer.
+func (o *Overworld) setWaterlogged(c *chunk.Chunk, lx, y, lz int, rid uint32) {
+	if lx < 0 || lx > 15 || lz < 0 || lz > 15 {
+		return
+	}
+	r := c.Range()
+	if y < r.Min() || y > r.Max() {
+		return
+	}
+	c.SetBlock(uint8(lx), int16(y), uint8(lz), 0, rid)
+	c.SetBlock(uint8(lx), int16(y), uint8(lz), 1, o.water)
 }
 
 // decorateLushCaves carpets the floor of the rare overgrown cave pockets.

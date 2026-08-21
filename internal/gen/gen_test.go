@@ -250,13 +250,13 @@ func TestOreDensityIsVanillaScale(t *testing.T) {
 		name     string
 		min, max float64
 	}{
-		{oreCoal, "coal", 45, 250},
-		{oreIron, "iron", 30, 200},
-		{oreCopper, "copper", 30, 200},
-		{oreGold, "gold", 6, 60},
-		{oreRedstone, "redstone", 8, 70},
-		{oreLapis, "lapis", 4, 45},
-		{oreDiamond, "diamond", 2, 28},
+		{oreCoal, "coal", 25, 250},
+		{oreIron, "iron", 20, 200},
+		{oreCopper, "copper", 20, 200},
+		{oreGold, "gold", 4, 60},
+		{oreRedstone, "redstone", 5, 70},
+		{oreLapis, "lapis", 3, 45},
+		{oreDiamond, "diamond", 1, 18},
 	} {
 		got := avg[tc.kind]
 		if got < tc.min || got > tc.max {
