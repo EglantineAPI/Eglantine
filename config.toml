@@ -1,25 +1,23 @@
-
 [Network]
-  Address = ":19132"
-
-[Players]
-  Folder = "players"
-  MaxCount = 0
-  MaximumChunkRadius = 32
-  SaveData = true
-
-[Resources]
-  AutoBuildPack = true
-  Folder = "resources"
-  Required = false
+Address = ':19132'
 
 [Server]
-  AuthEnabled = true
-  JoinMessage = "%v has joined the game"
-  Name = "Dragonfly Server"
-  QuitMessage = "%v has left the game"
-  ShutdownMessage = "Server closed."
+Name = 'Dragonfly Server'
+AuthEnabled = true
+DisableJoinQuitMessages = false
+MuteEmoteChat = false
 
 [World]
-  Folder = "world"
-  Name = "World"
+SaveData = true
+Folder = 'world'
+
+[Players]
+MaxCount = 0
+MaximumChunkRadius = 32
+SaveData = true
+Folder = 'players'
+
+[Resources]
+AutoBuildPack = true
+Folder = 'resources'
+Required = false

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"github.com/df-mc/dragonfly/server"
 	"github.com/df-mc/dragonfly/server/player/chat"
-	"github.com/pelletier/go-toml"
+	"github.com/pelletier/go-toml/v2"
 	"log/slog"
 	"os"
 )

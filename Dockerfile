@@ -1,4 +1,4 @@
-FROM golang:1.25-alpine as build
+FROM golang:1.26-alpine AS build
 WORKDIR /opt/build
 
 COPY main.go .
