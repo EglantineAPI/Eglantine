@@ -66,9 +66,9 @@ func TestOverworldIsSurvivable(t *testing.T) {
 		{"bedrock", o.bedrock, 100},
 		{"logs", o.log, 20},
 		{"leaves", o.leaves, 100},
-		{"coal ore", o.oreStone[0], 20},
-		{"iron ore", o.oreStone[1], 20},
-		{"diamond ore", o.oreDeep[3], 1},
+		{"coal ore", o.ore[oreCoal], 20},
+		{"iron ore", o.ore[oreIron], 20},
+		{"diamond ore", o.oreDeepslate[oreDiamond], 1},
 		{"lava", o.lava, 1},
 	} {
 		if got := counts[tc.rid]; got < tc.min {
@@ -210,4 +210,241 @@ func maxInt(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// oreCounts generates a square of chunks and returns the average number of
+// blocks of each ore per chunk.
+func oreCounts(t *testing.T, seed int64, radius int32) (map[oreKind]float64, int) {
+	t.Helper()
+	o := NewOverworld(seed)
+	byRID := map[uint32]oreKind{}
+	for k := oreKind(0); k < oreKindCount; k++ {
+		byRID[o.ore[k]] = k
+		byRID[o.oreDeepslate[k]] = k
+	}
+
+	totals := map[oreKind]int{}
+	chunks := 0
+	for cx := -radius; cx <= radius; cx++ {
+		for cz := -radius; cz <= radius; cz++ {
+			c := newChunk(KindOverworld)
+			o.GenerateChunk(world.ChunkPos{cx, cz}, c)
+			chunks++
+			r := c.Range()
+			for x := range uint8(16) {
+				for z := range uint8(16) {
+					for y := int16(r.Min()); y <= int16(r.Max()); y++ {
+						if k, ok := byRID[c.Block(x, y, z, 0)]; ok {
+							totals[k]++
+						}
+					}
+				}
+			}
+		}
+	}
+	avg := map[oreKind]float64{}
+	for k, n := range totals {
+		avg[k] = float64(n) / float64(chunks)
+	}
+	return avg, chunks
+}
+
+// TestOreDensityIsVanillaScale checks ore is neither absent nor everywhere.
+//
+// The bounds come from vanilla's own table: 30+20 coal veins of 17 blocks a
+// chunk make coal abundant, while diamond gets 14 vein attempts of 4 to 12
+// blocks that are then mostly discarded near air, so a chunk holds a handful of
+// diamonds rather than a pile.
+func TestOreDensityIsVanillaScale(t *testing.T) {
+	avg, chunks := oreCounts(t, 4242, 2)
+	t.Logf("averages over %d chunks: %v", chunks, avg)
+
+	for _, tc := range []struct {
+		kind     oreKind
+		name     string
+		min, max float64
+	}{
+		{oreCoal, "coal", 40, 250},
+		{oreIron, "iron", 30, 200},
+		{oreCopper, "copper", 30, 200},
+		{oreGold, "gold", 6, 60},
+		{oreRedstone, "redstone", 8, 70},
+		{oreLapis, "lapis", 4, 50},
+		{oreDiamond, "diamond", 2, 30},
+	} {
+		got := avg[tc.kind]
+		if got < tc.min || got > tc.max {
+			t.Errorf("%s: %.1f blocks per chunk, want between %.1f and %.1f", tc.name, got, tc.min, tc.max)
+		}
+	}
+}
+
+// TestOreRarityOrdering checks the ores keep vanilla's relative scarcity.
+// A world where diamond is as common as iron is the "roubado" case.
+func TestOreRarityOrdering(t *testing.T) {
+	avg, _ := oreCounts(t, 4242, 2)
+	if avg[oreCoal] <= avg[oreIron] {
+		t.Errorf("coal (%.1f) is not more common than iron (%.1f)", avg[oreCoal], avg[oreIron])
+	}
+	if avg[oreIron] <= avg[oreGold] {
+		t.Errorf("iron (%.1f) is not more common than gold (%.1f)", avg[oreIron], avg[oreGold])
+	}
+	if avg[oreDiamond] >= avg[oreGold] {
+		t.Errorf("diamond (%.1f) is not rarer than gold (%.1f)", avg[oreDiamond], avg[oreGold])
+	}
+	if avg[oreDiamond] >= avg[oreIron] {
+		t.Errorf("diamond (%.1f) is not rarer than iron (%.1f)", avg[oreDiamond], avg[oreIron])
+	}
+	// Diamond has to be the scarcest ore in the world, not merely scarce.
+	for k, n := range avg {
+		if k != oreDiamond && k != oreEmerald && n <= avg[oreDiamond] {
+			t.Errorf("ore %d (%.1f) is not more common than diamond (%.1f)", k, n, avg[oreDiamond])
+		}
+	}
+}
+
+// TestDiamondStaysDeep checks diamond never appears near the surface, which is
+// the property that makes finding it a trip to bedrock rather than a stroll.
+func TestDiamondStaysDeep(t *testing.T) {
+	o := NewOverworld(4242)
+	diamond := map[uint32]bool{o.ore[oreDiamond]: true, o.oreDeepslate[oreDiamond]: true}
+	for cx := int32(-2); cx <= 2; cx++ {
+		for cz := int32(-2); cz <= 2; cz++ {
+			c := newChunk(KindOverworld)
+			o.GenerateChunk(world.ChunkPos{cx, cz}, c)
+			for x := range uint8(16) {
+				for z := range uint8(16) {
+					for y := int16(17); y <= int16(c.Range().Max()); y++ {
+						if diamond[c.Block(x, y, z, 0)] {
+							t.Fatalf("diamond at y=%d, above the vanilla ceiling of 16", y)
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+// TestCoalStaysShallow is the mirror check: vanilla coal does not reach the
+// deepslate layer, so a deep mine should not be a coal mine.
+func TestCoalStaysShallow(t *testing.T) {
+	o := NewOverworld(4242)
+	coal := map[uint32]bool{o.ore[oreCoal]: true, o.oreDeepslate[oreCoal]: true}
+	for cx := int32(-2); cx <= 2; cx++ {
+		for cz := int32(-2); cz <= 2; cz++ {
+			c := newChunk(KindOverworld)
+			o.GenerateChunk(world.ChunkPos{cx, cz}, c)
+			for x := range uint8(16) {
+				for z := range uint8(16) {
+					for y := int16(c.Range().Min()); y < 0; y++ {
+						if coal[c.Block(x, y, z, 0)] {
+							t.Fatalf("coal at y=%d, below its vanilla floor of 0", y)
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+// TestNoGiantDiamondVeins guards the reported bug of stacks of 30 diamonds.
+// Vanilla's largest diamond batch is 12 blocks, so no connected run along any
+// axis should approach that.
+func TestNoGiantDiamondVeins(t *testing.T) {
+	o := NewOverworld(4242)
+	diamond := map[uint32]bool{o.ore[oreDiamond]: true, o.oreDeepslate[oreDiamond]: true}
+
+	worst := 0
+	for cx := int32(-1); cx <= 1; cx++ {
+		for cz := int32(-1); cz <= 1; cz++ {
+			c := newChunk(KindOverworld)
+			o.GenerateChunk(world.ChunkPos{cx, cz}, c)
+			r := c.Range()
+			for x := range uint8(16) {
+				for z := range uint8(16) {
+					run := 0
+					for y := int16(r.Min()); y <= int16(r.Max()); y++ {
+						if diamond[c.Block(x, y, z, 0)] {
+							run++
+							worst = max(worst, run)
+						} else {
+							run = 0
+						}
+					}
+				}
+			}
+		}
+	}
+	if worst > 6 {
+		t.Errorf("found a vertical run of %d diamond ore; vanilla veins are at most 12 blocks total and never a column that tall", worst)
+	}
+}
+
+// TestNoTreesOnGravel is the regression for trees growing on river gravel. It
+// happened because the decoration pass recomputed the biome with the river
+// strength forced to zero, so it disagreed with the surface actually placed.
+func TestNoTreesOnGravel(t *testing.T) {
+	o := NewOverworld(1234)
+	for cx := int32(-3); cx <= 3; cx++ {
+		for cz := int32(-3); cz <= 3; cz++ {
+			c := newChunk(KindOverworld)
+			o.GenerateChunk(world.ChunkPos{cx, cz}, c)
+			r := c.Range()
+			for x := range uint8(16) {
+				for z := range uint8(16) {
+					for y := int16(r.Min() + 1); y <= int16(r.Max()); y++ {
+						if c.Block(x, y, z, 0) != o.log {
+							continue
+						}
+						below := c.Block(x, y-1, z, 0)
+						if below == o.gravel || below == o.sand || below == o.water {
+							t.Fatalf("tree trunk at chunk (%d,%d) local (%d,%d,%d) stands on a non-soil block", cx, cz, x, y, z)
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+// TestGravelOnlyUnderwater is the regression for the strips of dry gravel that
+// looked like a gravel biome. Gravel is a river or sea bed, so a column whose
+// surface is gravel has to be below sea level.
+func TestGravelOnlyUnderwater(t *testing.T) {
+	o := NewOverworld(1234)
+	for x := -900; x < 900; x += 13 {
+		for z := -900; z < 900; z += 13 {
+			height, river := o.heightAt(x, z)
+			b := o.biomeAt(x, z, height, river)
+			top, _ := o.surfaceFor(b, height)
+			if top == o.gravel && height >= seaLevel {
+				t.Fatalf("column (%d,%d) has a gravel surface at y=%d, at or above sea level %d", x, z, height, seaLevel)
+			}
+		}
+	}
+}
+
+// TestRiversHoldWater checks a river channel actually reaches below sea level,
+// rather than leaving a dry trench where the biome says river.
+func TestRiversHoldWater(t *testing.T) {
+	o := NewOverworld(1234)
+	found, wet := 0, 0
+	for x := -2000; x < 2000; x += 3 {
+		for z := -2000; z < 2000; z += 61 {
+			height, river := o.heightAt(x, z)
+			if river < 0.9 {
+				continue
+			}
+			found++
+			if height < seaLevel {
+				wet++
+			}
+		}
+	}
+	if found == 0 {
+		t.Skip("no river centres in the sampled area")
+	}
+	if ratio := float64(wet) / float64(found); ratio < 0.95 {
+		t.Errorf("only %.0f%% of river centres are below sea level, want nearly all", ratio*100)
+	}
 }
