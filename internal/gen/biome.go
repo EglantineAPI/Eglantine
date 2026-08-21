@@ -16,6 +16,7 @@ const (
 	bDeepOcean
 	bRiver
 	bBeach
+	bSnowyBeach
 	bStonyShore
 	bPlains
 	bSunflowerPlains
@@ -74,6 +75,10 @@ func init() {
 		bDeepOcean: {biome: biome.DeepOcean{}, top: gravel, filler: gravel},
 		bRiver:     {biome: biome.River{}, top: sand, filler: dirt},
 		bBeach:     {biome: biome.Beach{}, top: sand, filler: sand},
+		// A cold coast is a snowy beach, not a tropical one washed up beside an
+		// ice field. Dragonfly has no ice block, so the water itself cannot be
+		// frozen over; the shore at least reads as cold.
+		bSnowyBeach: {biome: biome.SnowyBeach{}, top: snow, filler: sand},
 		// A stony shore is the cliff-footed coast that appears where high
 		// ground runs straight into the sea, instead of a sand beach.
 		bStonyShore: {biome: biome.StonyShore{}, top: stone, filler: stone},
@@ -167,8 +172,8 @@ func (o *Overworld) biomeAt(x, z, height int, river float64) biomeKind {
 	rain := o.humid.fbm(float64(x)+500, float64(z)+500, 3, 1.0/540.0, 0.5) * 1.7
 
 	if height <= beachTop {
-		if temp < -0.45 {
-			return bSnowyPlains
+		if temp < -0.30 {
+			return bSnowyBeach
 		}
 		// A shore with high ground right behind it is a stony cliff foot
 		// rather than a sand beach. Beaches are well under a percent of the
@@ -207,7 +212,7 @@ func (o *Overworld) biomeAt(x, z, height int, river float64) biomeKind {
 	// Swamps are low, wet and warm. Restricting them to nearly flat ground just
 	// above the waterline is what keeps them at the edges of lakes and rivers
 	// rather than partway up a hill.
-	if height <= seaLevel+8 && rain > 0.12 && temp > -0.05 {
+	if height <= seaLevel+10 && rain > 0.05 && temp > -0.05 {
 		return bSwamp
 	}
 

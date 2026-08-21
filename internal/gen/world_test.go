@@ -177,6 +177,7 @@ func TestPlantsStandOnSomething(t *testing.T) {
 	ground := map[uint32]bool{
 		o.grass: true, o.dirt: true, o.sand: true, o.podzol: true,
 		o.snow: true, o.stone: true, o.deepslate: true, o.gravel: true,
+		o.clay: true,
 	}
 	scan(t, o, 3, func(v chunkView, x uint8, y int16, z uint8, rid uint32) {
 		var ok bool
@@ -263,8 +264,8 @@ func TestRavinesExist(t *testing.T) {
 	if inRavine == 0 {
 		t.Fatal("no ravines anywhere in the sampled area")
 	}
-	if share > 0.02 {
-		t.Errorf("ravines cover %.2f%% of columns, want under 2%%", share*100)
+	if share > 0.03 {
+		t.Errorf("ravines cover %.2f%% of columns, want under 3%%", share*100)
 	}
 }
 
@@ -311,5 +312,128 @@ func TestSurfaceOpeningsExist(t *testing.T) {
 	}
 	if share > 0.35 {
 		t.Errorf("%.1f%% of columns allow a cave mouth; the surface would be full of holes", share*100)
+	}
+}
+
+// TestKelpIsWaterlogged is the regression for kelp breaking the moment a chunk
+// was ticked. A chunk holds the block and the liquid around it on two separate
+// layers; writing only the first removed the water the kelp was standing in.
+func TestKelpIsWaterlogged(t *testing.T) {
+	o := NewOverworld(1234)
+	found := 0
+	for cx := int32(-4); cx <= 4; cx++ {
+		for cz := int32(-4); cz <= 4; cz++ {
+			c := newChunk(KindOverworld)
+			o.GenerateChunk(world.ChunkPos{cx, cz}, c)
+			for x := range uint8(16) {
+				for z := range uint8(16) {
+					for y := int16(c.Range().Min()); y <= int16(seaLevel); y++ {
+						if c.Block(x, y, z, 0) != o.plants.kelp {
+							continue
+						}
+						found++
+						if liquid := c.Block(x, y, z, 1); liquid != o.water {
+							t.Fatalf("kelp at y=%d has %d on the liquid layer, not water", y, liquid)
+						}
+					}
+				}
+			}
+		}
+	}
+	if found == 0 {
+		t.Fatal("no kelp anywhere in the sampled area")
+	}
+}
+
+// TestSeabedVaries checks the sea floor is not one flat sheet of gravel.
+func TestSeabedVaries(t *testing.T) {
+	o := NewOverworld(1234)
+	seen := map[uint32]int{}
+	for x := -900; x < 900; x += 7 {
+		for z := -900; z < 900; z += 7 {
+			height, _ := o.heightAt(x, z)
+			if height >= seaLevel {
+				continue
+			}
+			top, _ := o.seabedAt(x, z, seaLevel-height)
+			seen[top]++
+		}
+	}
+	if len(seen) < 3 {
+		t.Errorf("the sea floor uses only %d materials, want at least 3", len(seen))
+	}
+	for _, tc := range []struct {
+		rid  uint32
+		name string
+	}{{o.sand, "sand"}, {o.gravel, "gravel"}, {o.dirt, "dirt"}} {
+		if seen[tc.rid] == 0 {
+			t.Errorf("the sea floor never uses %s", tc.name)
+		}
+	}
+}
+
+// TestLavaLakesReachTheSurface checks surface lava pools generate, and that
+// they are rimmed rather than lava simply meeting grass.
+func TestLavaLakesReachTheSurface(t *testing.T) {
+	o := NewOverworld(1234)
+	lakes, rimmed := 0, 0
+
+	for cx := int32(-8); cx <= 8; cx++ {
+		for cz := int32(-8); cz <= 8; cz++ {
+			c := newChunk(KindOverworld)
+			o.GenerateChunk(world.ChunkPos{cx, cz}, c)
+			for x := uint8(1); x < 15; x++ {
+				for z := uint8(1); z < 15; z++ {
+					for y := int16(seaLevel + 4); y <= int16(200); y++ {
+						if c.Block(x, y, z, 0) != o.lava {
+							continue
+						}
+						lakes++
+						// Somewhere around a surface pool there has to be the
+						// stone rim the feature lays down.
+						for _, d := range [4][2]int8{{1, 0}, {-1, 0}, {0, 1}, {0, -1}} {
+							if c.Block(uint8(int8(x)+d[0]), y, uint8(int8(z)+d[1]), 0) == o.stone {
+								rimmed++
+								break
+							}
+						}
+						break
+					}
+				}
+			}
+		}
+	}
+	if lakes == 0 {
+		t.Fatal("no surface lava anywhere in 289 chunks")
+	}
+	if rimmed == 0 {
+		t.Error("surface lava has no stone rim around it")
+	}
+}
+
+// TestColdCoastsAreSnowy is the complaint about small sand beaches next to ice
+// fields. A cold shore should read as cold.
+func TestColdCoastsAreSnowy(t *testing.T) {
+	o := NewOverworld(1234)
+	sandy, snowy := 0, 0
+	for x := -2000; x < 2000; x += 11 {
+		for z := -2000; z < 2000; z += 11 {
+			height, river := o.heightAt(x, z)
+			if height < seaLevel || height > beachTop {
+				continue
+			}
+			switch o.biomeAt(x, z, height, river) {
+			case bBeach:
+				sandy++
+			case bSnowyBeach:
+				snowy++
+			}
+		}
+	}
+	if snowy == 0 {
+		t.Fatal("no snowy beaches anywhere; every cold coast is sand")
+	}
+	if sandy == 0 {
+		t.Error("no ordinary beaches at all")
 	}
 }

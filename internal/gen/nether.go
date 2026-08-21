@@ -11,21 +11,29 @@ import (
 // netherLavaLevel is the y below which carved space floods with lava.
 const netherLavaLevel = 31
 
+// netherRoof is the bedrock ceiling. The nether is a closed box.
+const netherRoof = 127
+
 // Nether generates the nether: a netherrack mass hollowed into caverns, capped
-// and floored with bedrock, flooded with lava at the bottom, with soul sand
-// patches and glowstone on cavern ceilings.
+// and floored with bedrock, flooded with lava at the bottom, with soul sand and
+// gravel patches, glowstone clusters hanging from cavern ceilings, and the
+// nether ores placed to vanilla's own table.
 type Nether struct {
 	cave, patch *perlin
 	seed        int64
 
 	netherrack, lava, bedrock, soulSand, glowstone, gravel uint32
+	quartzOre, goldOre, debris, magma, blackstone          uint32
+
+	ores *veinField
 }
 
 // NewNether builds a Nether generator for the seed passed.
 func NewNether(seed int64) *Nether {
 	br := world.DefaultBlockRegistry
 	rid := func(b world.Block) uint32 { return br.BlockRuntimeID(b) }
-	return &Nether{
+
+	n := &Nether{
 		seed:  seed,
 		cave:  newPerlin(seed + 11),
 		patch: newPerlin(seed + 12),
@@ -36,6 +44,41 @@ func NewNether(seed int64) *Nether {
 		soulSand:   rid(block.SoulSand{}),
 		glowstone:  rid(block.Glowstone{}),
 		gravel:     rid(block.Gravel{}),
+		quartzOre:  rid(block.NetherQuartzOre{}),
+		goldOre:    rid(block.NetherGoldOre{}),
+		debris:     rid(block.AncientDebris{}),
+		magma:      rid(block.Magma{}),
+		blackstone: rid(block.Blackstone{}),
+	}
+	n.ores = n.buildOreField()
+	return n
+}
+
+// buildOreField assembles the nether ore table from vanilla's own numbers.
+//
+// Ancient debris uses vanilla's scattered_ore rather than a blob, which is why
+// it turns up as isolated blocks, and both of its batches discard on any air
+// exposure, which is why it is never found in the wall of an open cavern.
+func (n *Nether) buildOreField() *veinField {
+	return &veinField{
+		seed: n.seed,
+		air:  world.DefaultBlockRegistry.AirRuntimeID(),
+		hostRock: func(rid uint32) (bool, bool) {
+			return false, rid == n.netherrack
+		},
+		specs: []veinSpec{
+			{block: n.quartzOre, count: 16, size: 14, dist: distUniform, minY: 10, maxY: 118},
+			{block: n.goldOre, count: 10, size: 10, dist: distUniform, minY: 10, maxY: 118},
+
+			// Netherite. One attempt each of two tiny scattered batches, both
+			// discarded wherever they touch air, is the whole supply.
+			{block: n.debris, count: 1, size: 3, dist: distTriangle, minY: 8, maxY: 24, discardOnAir: 1.0, scattered: true},
+			{block: n.debris, count: 1, size: 2, dist: distUniform, minY: 8, maxY: 119, discardOnAir: 1.0, scattered: true},
+
+			{block: n.magma, count: 4, size: 33, dist: distUniform, minY: 27, maxY: 36},
+			{block: n.blackstone, count: 2, size: 33, dist: distUniform, minY: 5, maxY: 31},
+			{block: n.gravel, count: 2, size: 33, dist: distUniform, minY: 5, maxY: 41},
+		},
 	}
 }
 
@@ -47,8 +90,17 @@ func (n *Nether) hollow(x, y, z int) bool {
 
 // GenerateChunk implements world.Generator.
 func (n *Nether) GenerateChunk(pos world.ChunkPos, c *chunk.Chunk) {
+	cp := chunkPos{x: int(pos.X()), z: int(pos.Z())}
+	n.generateTerrain(cp, c)
+	n.ores.place(cp, c, false)
+	n.growGlowstone(cp, c)
+}
+
+// generateTerrain lays down the netherrack mass, the lava sea and the bedrock
+// shell.
+func (n *Nether) generateTerrain(pos chunkPos, c *chunk.Chunk) {
 	min, max := int16(c.Range().Min()), int16(c.Range().Max())
-	baseX, baseZ := int(pos.X())*16, int(pos.Z())*16
+	baseX, baseZ := pos.x*16, pos.z*16
 	bid := uint32(biome.NetherWastes{}.EncodeBiome())
 
 	for lx := range 16 {
@@ -60,26 +112,19 @@ func (n *Nether) GenerateChunk(pos world.ChunkPos, c *chunk.Chunk) {
 				c.SetBiome(x, y, z, bid)
 				wy := int(y)
 
-				// The nether is a closed box: bedrock floor and ceiling.
-				if wy <= int(min)+1 || wy >= 127 {
+				if wy <= int(min)+1 || wy == netherRoof {
 					c.SetBlock(x, y, z, 0, n.bedrock)
 					continue
 				}
-				if wy > 127 {
+				if wy > netherRoof {
 					continue
 				}
-
 				if !n.hollow(wx, wy, wz) {
 					c.SetBlock(x, y, z, 0, n.surfaceBlock(wx, wy, wz))
 					continue
 				}
 				if wy <= netherLavaLevel {
 					c.SetBlock(x, y, z, 0, n.lava)
-					continue
-				}
-				// Open cavern. Hang glowstone where solid rock is just above.
-				if !n.hollow(wx, wy+1, wz) && int(hashMix(wx, wy, wz, uint64(n.seed))%1000) < 12 {
-					c.SetBlock(x, y, z, 0, n.glowstone)
 				}
 			}
 		}
@@ -96,6 +141,70 @@ func (n *Nether) surfaceBlock(x, y, z int) uint32 {
 		return n.gravel
 	default:
 		return n.netherrack
+	}
+}
+
+// glowstoneAttempts is how many clusters are tried per chunk. Glowstone is
+// meant to be a landmark you cross a cavern towards, so there are few
+// attempts and each grows a real cluster, rather than many attempts each
+// leaving a single block.
+const glowstoneAttempts = 2
+
+// growGlowstone hangs clusters of glowstone from cavern ceilings.
+//
+// Each attempt scans a column downward for a real ceiling — solid rock with
+// open air directly beneath it — rather than testing one random height and
+// giving up. Testing a single height almost always misses, which left the
+// nether with a few isolated blocks instead of clusters.
+func (n *Nether) growGlowstone(pos chunkPos, c *chunk.Chunk) {
+	baseX, baseZ := pos.x*16, pos.z*16
+	r := &detRand{s: hashMix(pos.x, 7, pos.z, uint64(n.seed)+0x91045)}
+
+	for range glowstoneAttempts {
+		lx, lz := r.intn(16), r.intn(16)
+		wx, wz := baseX+lx, baseZ+lz
+		start := netherLavaLevel + 6 + r.intn(netherRoof-netherLavaLevel-14)
+
+		y, found := n.ceilingBelow(wx, start, wz)
+		if !found {
+			continue
+		}
+		n.hangCluster(c, r, lx, y, lz, wx, wz)
+	}
+}
+
+// ceilingBelow scans down from a height for the first open cell with solid rock
+// directly above it, returning that cell.
+func (n *Nether) ceilingBelow(x, from, z int) (int, bool) {
+	for y := from; y > netherLavaLevel+2; y-- {
+		if n.hollow(x, y, z) && !n.hollow(x, y+1, z) {
+			return y, true
+		}
+	}
+	return 0, false
+}
+
+// hangCluster writes one glowstone cluster growing down from a ceiling.
+func (n *Nether) hangCluster(c *chunk.Chunk, r *detRand, lx, y, lz, wx, wz int) {
+	blocks := 14 + r.intn(18)
+	minY := int(c.Range().Min())
+
+	for range blocks {
+		// Offsets are drawn twice and averaged, which biases the cluster
+		// towards its anchor and keeps it connected rather than sprayed.
+		dx := (r.intn(5)+r.intn(5))/2 - 2
+		dz := (r.intn(5)+r.intn(5))/2 - 2
+		dy := -((r.intn(4) + r.intn(4)) / 2)
+
+		bx, by, bz := lx+dx, y+dy, lz+dz
+		if bx < 0 || bx > 15 || bz < 0 || bz > 15 || by <= minY || by >= netherRoof {
+			continue
+		}
+		// Only fill open cavern; a cluster must not bury itself in the rock.
+		if !n.hollow(wx+dx, by, wz+dz) {
+			continue
+		}
+		c.SetBlock(uint8(bx), int16(by), uint8(bz), 0, n.glowstone)
 	}
 }
 

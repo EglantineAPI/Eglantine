@@ -38,14 +38,14 @@ func (o *Overworld) columnCaveAt(x, z, height int) columnCave {
 
 	// Cave mouths are deliberately uncommon: this mask is above its threshold
 	// over roughly a tenth of the surface.
-	cc.openSurface = o.cave.fbm(float64(x)+4400, float64(z)-4400, 2, 1.0/260.0, 0.5) > 0.30
+	cc.openSurface = o.cave.fbm(float64(x)+4400, float64(z)-4400, 2, 1.0/260.0, 0.5) > 0.16
 
 	// A ravine needs two things: a region that has ravines at all, and a narrow
 	// line within it. Without the region mask, the line field would draw
 	// ravines evenly across the entire world.
 	if o.ravineRegion(x, z) {
 		line := o.cave.fbm(float64(x)-9000, float64(z)+9000, 2, 1.0/380.0, 0.5)
-		if halfWidth := 0.020; absF(line) < halfWidth {
+		if halfWidth := 0.019; absF(line) < halfWidth {
 			cc.ravine = true
 			// Ravines open at the surface, which is what makes them a landmark
 			// rather than a hidden void.
@@ -59,7 +59,7 @@ func (o *Overworld) columnCaveAt(x, z, height int) columnCave {
 
 // ravineRegion reports whether ravines occur near a position at all.
 func (o *Overworld) ravineRegion(x, z int) bool {
-	return o.ravine.fbm(float64(x)+2100, float64(z)+2100, 1, 1.0/1500.0, 0.5) > 0.28
+	return o.ravine.fbm(float64(x)+2100, float64(z)+2100, 1, 1.0/1500.0, 0.5) > 0.15
 }
 
 // carvedAt reports whether a cell is hollow.
