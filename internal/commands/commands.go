@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/df-mc/dragonfly/server"
 	"github.com/df-mc/dragonfly/server/cmd"
 	"github.com/df-mc/dragonfly/server/player"
 	"github.com/df-mc/dragonfly/server/world"
@@ -30,14 +31,58 @@ var (
 
 // Register wires the commands to their dependencies and registers them. It must
 // be called once, before the server starts accepting players.
-func Register(m *worlds.Manager, o *perm.Store, l *slog.Logger) {
+//
+// Every command registered here is sent to each client in the available
+// commands packet, so parameters typed as enums complete as they are typed the
+// same way the vanilla commands do.
+func Register(m *worlds.Manager, o *perm.Store, l *slog.Logger, s *server.Server, seed int64, stop func()) {
 	manager, ops, log = m, o, l
+	srv, builtInSeed, stopServer = s, seed, stop
 
-	cmd.Register(cmd.New("world", "Manage the worlds on this server.", []string{"w"},
-		worldList{}, worldInfo{}, worldCreate{}, worldTeleport{}, worldDelete{}, worldRename{},
-	))
-	cmd.Register(cmd.New("op", "Grant a player operator status.", nil, opsCommand{}, opCommand{}))
-	cmd.Register(cmd.New("deop", "Revoke a player's operator status.", nil, deopCommand{}))
+	reg := func(name, desc string, aliases []string, r ...cmd.Runnable) {
+		cmd.Register(cmd.New(name, desc, aliases, r...))
+	}
+
+	// Server administration.
+	reg("world", "Manage the worlds on this server.", []string{"w"},
+		worldList{}, worldInfo{}, worldCreate{}, worldTeleport{}, worldDelete{}, worldRename{})
+	reg("op", "Grant a player operator status.", nil, opsCommand{}, opCommand{})
+	reg("deop", "Revoke a player's operator status.", nil, deopCommand{})
+	reg("stop", "Shut the server down.", nil, stopCommand{})
+	reg("help", "List the commands you can run.", []string{"?"}, helpCommand{})
+	reg("list", "Show who is online.", nil, listCommand{})
+	reg("kick", "Disconnect a player.", nil, kickCommand{})
+	reg("transfer", "Send a player to another server.", nil, transferCommand{})
+
+	// Chat.
+	reg("say", "Broadcast a message to everyone.", nil, sayCommand{})
+	reg("me", "Describe what you are doing.", nil, meCommand{})
+	reg("tell", "Send a private message.", []string{"msg", "w"}, tellCommand{})
+
+	// Players.
+	reg("gamemode", "Change a player's game mode.", []string{"gm"}, gameModeCommand{})
+	reg("teleport", "Move a player.", []string{"tp"}, teleportToPos{}, teleportToPlayer{})
+	reg("kill", "Kill a player.", nil, killCommand{})
+	reg("give", "Give items to a player.", nil, giveCommand{})
+	reg("clear", "Empty a player's inventory.", nil, clearCommand{})
+	reg("experience", "Give or take experience.", []string{"xp"}, experienceCommand{})
+	reg("effect", "Apply or clear a status effect.", nil, effectCommand{})
+	reg("enchant", "Enchant the item a player is holding.", nil, enchantCommand{})
+	reg("title", "Show a title on a player's screen.", nil, titleCommand{})
+	reg("spawnpoint", "Set where a player respawns.", nil, spawnPointCommand{})
+
+	// World.
+	reg("time", "Read or change the time of day.", nil, timeSet{}, timeAdd{}, timeQuery{})
+	reg("weather", "Change the weather.", nil, weatherCommand{})
+	reg("difficulty", "Change the difficulty.", nil, difficultyCommand{})
+	reg("gamerule", "Read or change a game rule.", nil, gameRuleCommand{})
+	reg("daylock", "Lock the time at day.", []string{"alwaysday"}, dayLockCommand{})
+	reg("setblock", "Place a single block.", nil, setBlockCommand{})
+	reg("fill", "Fill a region with a block.", nil, fillCommand{})
+	reg("clone", "Copy a region of blocks.", nil, cloneCommand{})
+	reg("setworldspawn", "Set the world spawn point.", nil, setWorldSpawnCommand{})
+	reg("seed", "Show this world's seed.", nil, seedCommand{})
+	reg("save", "Write the world to disk now.", nil, saveCommand{})
 }
 
 // operator reports whether a command source may run operator commands. The
@@ -421,4 +466,12 @@ func (opsCommand) Run(_ cmd.Source, o *cmd.Output, _ *world.Tx) {
 var (
 	_ cmd.Enum = worldName("")
 	_ cmd.Enum = generatorKind("")
+)
+
+// Command dependencies that cannot be reached from a Runnable, which the
+// command system builds by reflection. They are set once by Register.
+var (
+	srv         *server.Server
+	stopServer  func()
+	builtInSeed int64
 )

@@ -408,3 +408,22 @@ func LoadSeed(dir string) (int64, error) {
 	}
 	return seed, nil
 }
+
+// InfoForWorld returns the description of a world by identity rather than by
+// name. Commands run inside a transaction know the *world.World they are in but
+// not what the Manager calls it.
+func (m *Manager) InfoForWorld(w *world.World) (Info, bool) {
+	m.mu.RLock()
+	var name string
+	for _, e := range m.entries {
+		if e.w == w {
+			name = e.name
+			break
+		}
+	}
+	m.mu.RUnlock()
+	if name == "" {
+		return Info{}, false
+	}
+	return m.Info(name)
+}

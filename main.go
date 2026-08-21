@@ -64,18 +64,20 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	commands.Register(mgr, ops, log)
+	// The console's stop callback and the command's /stop share one path.
+	shutdown := func() {
+		if err := srv.Close(); err != nil {
+			log.Error("Could not close the server.", "error", err)
+		}
+	}
+	commands.Register(mgr, ops, log, srv, seed, shutdown)
 
 	srv.CloseOnProgramEnd()
 
 	// The console shuts the server down on "stop" and on end of input. Closing
 	// the server ends the Accept loop below, and the deferred close of the
 	// manager then runs.
-	term := console.New(log, func() {
-		if err := srv.Close(); err != nil {
-			log.Error("Could not close the server.", "error", err)
-		}
-	})
+	term := console.New(log, shutdown)
 	go term.Run()
 
 	srv.Listen()
