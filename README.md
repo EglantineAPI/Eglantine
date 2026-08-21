@@ -8,8 +8,9 @@ on how to set up a new GitHub repository using this template.
 This template also contains a Dockerfile, that can be run with this:
 ```shell
 docker build -t dragonfly-image .
-docker run -p 19132:19132/udp \
-  -v "$PWD/world:/opt/app/world" \
+docker run -p 19130:19130/udp \
+  -v "$PWD/worlds:/opt/app/worlds" \
+  -v "$PWD/players:/opt/app/players" \
   -v "$PWD/resources:/opt/app/resources" \
   dragonfly-image
 ```
