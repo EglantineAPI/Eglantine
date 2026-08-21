@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
+	"strings"
 	"time"
 
 	"github.com/df-mc/dragonfly/server/cmd"
@@ -35,7 +36,7 @@ func Register(m *worlds.Manager, o *perm.Store, l *slog.Logger) {
 	cmd.Register(cmd.New("world", "Manage the worlds on this server.", []string{"w"},
 		worldList{}, worldInfo{}, worldCreate{}, worldTeleport{}, worldDelete{}, worldRename{},
 	))
-	cmd.Register(cmd.New("op", "Grant a player operator status.", nil, opCommand{}))
+	cmd.Register(cmd.New("op", "Grant a player operator status.", nil, opsCommand{}, opCommand{}))
 	cmd.Register(cmd.New("deop", "Revoke a player's operator status.", nil, deopCommand{}))
 }
 
@@ -355,39 +356,33 @@ func (c worldRename) Run(_ cmd.Source, o *cmd.Output, tx *world.Tx) {
 }
 
 // opCommand grants operator status.
+//
+// It takes a plain name rather than a target selector so that a player who is
+// not connected can still be made an operator, which is the normal case when
+// setting up a server from the console before anyone joins.
 type opCommand struct {
-	Target []cmd.Target `cmd:"player"`
+	PlayerName string `cmd:"player"`
 }
 
 func (opCommand) Allow(src cmd.Source) bool { return operator(src) }
 
 func (c opCommand) Run(_ cmd.Source, o *cmd.Output, _ *world.Tx) {
-	if len(c.Target) == 0 {
-		o.Error("No player matched.")
+	// The XUID is only knowable while the player is connected. Adding with an
+	// empty one is fine: NoteXUID fills it in when they next join.
+	added, err := ops.Add(c.PlayerName, "")
+	if err != nil {
+		o.Errorf("Could not save the operator list: %v", err)
 		return
 	}
-	for _, t := range c.Target {
-		p, ok := t.(*player.Player)
-		if !ok {
-			continue
-		}
-		added, err := ops.Add(p.Name(), p.XUID())
-		if err != nil {
-			o.Errorf("Could not save the operator list: %v", err)
-			return
-		}
-		if !added {
-			o.Printf("%s is already an operator.", p.Name())
-			continue
-		}
-		o.Printf("%s is now an operator.", p.Name())
-		p.Message("You are now an operator.")
+	if !added {
+		o.Printf("%s is already an operator.", c.PlayerName)
+		return
 	}
+	o.Printf("%s is now an operator.", c.PlayerName)
 }
 
-// deopCommand revokes operator status. It takes a plain name rather than a
-// target selector, so an operator who is currently offline can still be
-// removed.
+// deopCommand revokes operator status. It also takes a plain name, so an
+// operator who is offline can be removed.
 type deopCommand struct {
 	PlayerName string `cmd:"player"`
 }
@@ -404,6 +399,22 @@ func (c deopCommand) Run(_ cmd.Source, o *cmd.Output, _ *world.Tx) {
 		return
 	}
 	o.Printf("%s is no longer an operator.", c.PlayerName)
+}
+
+// opsCommand lists the operators.
+type opsCommand struct {
+	Sub cmd.SubCommand `cmd:"list"`
+}
+
+func (opsCommand) Allow(src cmd.Source) bool { return operator(src) }
+
+func (opsCommand) Run(_ cmd.Source, o *cmd.Output, _ *world.Tx) {
+	names := ops.Names()
+	if len(names) == 0 {
+		o.Print("There are no operators.")
+		return
+	}
+	o.Printf("Operators (%d): %s", len(names), strings.Join(names, ", "))
 }
 
 // Both enums must satisfy cmd.Enum for the client to complete their values.

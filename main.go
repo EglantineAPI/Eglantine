@@ -80,7 +80,12 @@ func main() {
 
 	srv.Listen()
 	for p := range srv.Accept() {
-		_ = p
+		// Operators can be added by name while offline, so the XUID is only
+		// available now. NoteXUID fills it in for those entries and leaves
+		// everyone else alone.
+		if err := ops.NoteXUID(p.Name(), p.XUID()); err != nil {
+			log.Error("Could not record operator XUID.", "player", p.Name(), "error", err)
+		}
 	}
 
 	if err := mgr.Close(); err != nil {

@@ -112,6 +112,11 @@ var oreBatches = []oreBatch{
 	{kind: oreEmerald, count: 100, size: 3, dist: distTriangle, minY: -16, maxY: 480, limit: limitMountain},
 }
 
+// vanillaWallExposure is the share of deep stone positions that touch a cave
+// wall in vanilla, standing in for the wall area this generator does not have.
+// It only ever applies to batches vanilla already marks for discard.
+const vanillaWallExposure = 0.55
+
 // maxVeinReach bounds how far a vein can extend from its centre. It decides how
 // many neighbouring chunks have to be considered so veins are not clipped at
 // chunk borders.
@@ -271,8 +276,26 @@ func (o *Overworld) fillBlob(batch oreBatch, vr *detRand, c *chunk.Chunk, px, py
 				if existing != o.stone && existing != o.deepslate {
 					continue
 				}
-				if batch.discardOnAir > 0 && vr.float() < batch.discardOnAir && o.touchesAir(c, lx, by, lz, minY, maxY) {
-					continue
+				if batch.discardOnAir > 0 && vr.float() < batch.discardOnAir {
+					// Vanilla culls this block when it touches air. Doing only
+					// that here leaves the buried ores far too plentiful: the
+					// cull depends on how much cave *wall* the world has, and
+					// vanilla's many winding tunnels expose several times the
+					// surface that this generator's fewer, larger caverns do.
+					// Measured here, under a tenth of deep stone touches air
+					// against roughly half in vanilla.
+					//
+					// So the check is split. The air test keeps buried ore out
+					// of cave walls, which is what it looks like it is for. The
+					// second roll culls at the rate vanilla's extra wall area
+					// would have, which is what actually keeps gold, lapis and
+					// diamond scarce.
+					if o.touchesAir(c, lx, by, lz, minY, maxY) {
+						continue
+					}
+					if vr.float() < vanillaWallExposure {
+						continue
+					}
 				}
 				out := rid
 				if existing == o.deepslate {
