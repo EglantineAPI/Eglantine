@@ -9,7 +9,7 @@ MuteEmoteChat = false
 
 [World]
 SaveData = true
-Folder = 'world'
+Folder = 'worlds/world'
 
 [Players]
 MaxCount = 0

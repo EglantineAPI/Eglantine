@@ -26,3 +26,10 @@ go.work.sum
 /world/
 /players/
 /resources/
+
+# Runtime state: generated worlds, player data, unpacked resource packs and the
+# operator list are per-deployment and must not be committed.
+/worlds/
+/players/
+/resources/
+/operators.json
